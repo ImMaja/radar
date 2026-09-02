@@ -132,10 +132,13 @@ source peuvent être incomplets.
 
 ### 6.4 Prospect régulier
 
-Implantation physique locale et contactable susceptible d'accueillir un food
-truck ou d'organiser des événements. Il peut s'agir d'un établissement
-officiellement identifié ou, à défaut, de l'adresse opérationnelle d'une
-association, d'une administration ou d'un autre organisme.
+Implantation physique locale susceptible d'accueillir un food truck ou
+d'organiser des événements. Il peut s'agir d'un établissement officiellement
+identifié ou, à défaut, de l'adresse opérationnelle d'une association, d'une
+administration ou d'un autre organisme.
+
+La présence d'un email, d'un téléphone ou d'un site web n'est pas nécessaire
+pour qu'une implantation constitue un prospect régulier.
 
 Le prospect régulier est l'opportunité affichée et évaluée. Son organisme de
 rattachement n'est pas compté comme une seconde opportunité locale.
@@ -161,29 +164,34 @@ est calculée depuis le site physique, et non depuis un siège situé ailleurs.
 ### 6.7 Événement
 
 Manifestation datée organisée dans un lieu physique. Dans le MVP, une fiche
-représente une occurrence ou une édition commercialement distincte.
+représente une manifestation ou une édition commercialement distincte et peut
+contenir une ou plusieurs périodes d'occurrence publiées par sa source.
 
-- Un événement continu sur plusieurs jours possède une date de début et une
-  date de fin dans une seule fiche.
+- Un événement continu sur plusieurs jours possède une seule période avec une
+  date de début et une date de fin.
+- Un événement récurrent à des dates non consécutives, tel qu'un marché
+  hebdomadaire, reste une seule fiche lorsque la source le décrit comme un seul
+  événement ; ses différentes périodes sont conservées.
 - Les éditions 2026 et 2027 d'un même festival sont deux fiches distinctes.
-- Pour un rendez-vous fortement récurrent, le MVP conserve la granularité de
-  la source qui crée la fiche. Il n'exige pas de regroupement automatique en
-  série.
+- Le MVP conserve le regroupement fourni par la source. Il n'invente pas
+  d'occurrences non publiées et ne regroupe pas automatiquement plusieurs
+  fiches distinctes en une série.
 
 L'état temporel est calculé dans le fuseau Europe/Paris :
 
-- un événement est à venir avant son début ;
-- il est en cours entre son début et sa fin ;
-- il est passé après sa fin ;
-- si aucune heure de fin n'est connue, la fin de la dernière date connue est
-  utilisée ; pour une date sans heure, il reste donc affichable jusqu'à la fin
+- un événement est en cours lorsqu'au moins une de ses périodes est en cours ;
+- il est à venir lorsqu'aucune période n'est en cours et qu'au moins une
+  période future est connue ;
+- il est passé lorsque toutes ses périodes connues sont terminées ;
+- pour chaque période sans heure de fin, la fin de sa dernière date connue est
+  utilisée ; pour une date sans heure, elle reste donc active jusqu'à la fin
   de cette journée.
 
 ### 6.8 Organisateur
 
 Organisme responsable d'un événement. Un organisateur peut être lié à
 plusieurs événements et peut également constituer un prospect régulier
-lorsqu'il possède une implantation locale contactable.
+lorsqu'il possède une implantation locale.
 
 ### 6.9 Fiche
 
@@ -195,9 +203,11 @@ utilisateur et une note libre.
 ### 6.10 Observation source
 
 Enregistrement reçu d'un fournisseur externe. Il conserve au minimum le nom
-du fournisseur, son identifiant externe ou une clé technique stable lorsqu'il
-n'en fournit pas, son URL lorsqu'elle existe, sa date de collecte et sa date de
-mise à jour lorsqu'elle est fournie.
+du fournisseur, son identifiant externe ou une clé technique dont la stabilité
+et l'unicité ont été vérifiées lorsqu'il n'en fournit pas, son URL lorsqu'elle
+existe, sa date de collecte et sa date de mise à jour lorsqu'elle est fournie.
+Une clé technique sert à reconnaître une observation de cette source ; elle ne
+constitue jamais à elle seule un identifiant commun à plusieurs fournisseurs.
 
 ### 6.11 Score commercial
 
@@ -386,10 +396,15 @@ Les prospects réguliers peuvent être filtrés selon :
 - le type d'organisme ;
 - l'activité ;
 - la tranche d'effectif lorsqu'elle est connue ;
-- la présence d'un email ;
-- la présence d'un téléphone ;
-- la présence d'un site web ;
+- la présence connue d'un email ;
+- la présence connue d'un téléphone ;
+- la présence connue d'un site web ;
 - une plage de score.
+
+Une fiche sans moyen de contact reste une fiche valide et visible. Lorsqu'une
+source ne fournit pas un type de contact, celui-ci est inconnu et non considéré
+comme définitivement absent. Les filtres de présence sélectionnent uniquement
+les fiches pour lesquelles le moyen demandé est effectivement connu.
 
 ### 9.4 Événements
 
@@ -408,7 +423,7 @@ La fiche d'un événement présente, lorsque les données existent :
 
 - le titre et la description ;
 - la catégorie ;
-- la date ou la période de l'occurrence ;
+- la ou les périodes d'occurrence ;
 - le statut déclaré lorsqu'il est connu : programmé, reporté ou annulé ;
 - l'état temporel calculé : à venir, en cours ou passé ;
 - le lieu, son adresse et sa distance ;
@@ -428,6 +443,9 @@ Les événements peuvent être filtrés selon :
 - le statut déclaré ;
 - une plage de score.
 
+Le filtre de période retient une fiche dès qu'au moins une de ses occurrences
+chevauche la période recherchée.
+
 Un contact événementiel est considéré comme disponible lorsqu'au moins un
 canal professionnel exploitable existe : email, téléphone, site officiel,
 lien de réservation ou relais de contact fourni par la source. Il ne doit pas
@@ -435,11 +453,12 @@ lien de réservation ou relais de contact fourni par la source. Il ne doit pas
 pas connue.
 
 Les événements passés restent conservés dans la base, mais ne sont pas
-affichés dans les listes ordinaires du MVP. Ils ne font l'objet d'aucune purge
-automatique. Une correction qui replace un événement dans le futur le rend à
-nouveau visible. Les événements annulés à venir ne sont pas affichés par
-défaut, mais peuvent être inclus avec le filtre de statut. La disparition d'un
-événement d'une source ne suffit pas à le marquer comme annulé.
+accessibles dans l'interface ordinaire du MVP. Ils ne font l'objet d'aucune
+purge automatique. Si une mise à jour reçue de la source ajoute ou déplace une
+occurrence non terminée, la fiche redevient automatiquement visible. Les
+événements annulés à venir ne sont pas affichés par défaut, mais peuvent être
+inclus avec le filtre de statut. La disparition d'un événement d'une source ne
+suffit pas à le marquer comme annulé.
 
 Un événement explicitement masqué reste toutefois accessible dans l'onglet
 « Fiches masquées » même après être devenu passé, afin qu'il puisse toujours
@@ -501,6 +520,15 @@ et n'applique aucun seuil qui cache automatiquement une fiche. De tels seuils
 ne seront envisagés qu'après qualification d'un échantillon réel. Les
 pondérations et jeux d'exemples relèvent de `docs/scoring.md`.
 
+Avant de considérer les premières règles comme validées, un échantillon réel
+et varié est qualifié manuellement comme « clairement intéressant »,
+« clairement peu intéressant » ou « incertain », avec une justification. Ces
+jugements servent uniquement à vérifier le classement et ne deviennent pas des
+catégories affichées. Les règles initiales sont acceptables lorsqu'elles sont
+calculables à partir des données réellement disponibles, restent explicables,
+traitent les inconnues de manière neutre et classent globalement les cas
+évidemment intéressants avant les cas évidemment faibles.
+
 ### 9.7 Sources, synchronisation et provenance
 
 - La première source de prospects réguliers du MVP est l'API Recherche
@@ -517,6 +545,10 @@ pondérations et jeux d'exemples relèvent de `docs/scoring.md`.
   peuvent aussi l'être à tout moment avec un bouton « Actualiser maintenant ».
 - Les événements sont actualisés automatiquement chaque nuit, selon le fuseau
   Europe/Paris, et peuvent également l'être manuellement.
+- Chaque collecte événementielle cherche tous les événements publiés dans la
+  zone qui possèdent au moins une occurrence non terminée, sans imposer de date
+  maximale dans le futur. L'horizon réellement disponible dépend uniquement
+  de ce que la source a déjà publié.
 - Le déclenchement manuel est disponible notamment après un changement
   d'adresse ou de rayon, sans attendre la prochaine exécution planifiée.
 - Deux collectes identiques ne s'exécutent jamais simultanément.
@@ -537,6 +569,13 @@ pondérations et jeux d'exemples relèvent de `docs/scoring.md`.
 - Une collecte échouée ne supprime et ne masque aucune donnée déjà conservée.
 - Chaque observation externe conservée garde sa provenance, même lorsque
   plusieurs sources sont regroupées dans une fiche.
+
+La validation manuelle initiale des connecteurs utilise la zone réelle de
+50 km et un ensemble varié de prospects et d'événements. Elle vérifie au
+minimum l'identité stable fournie par la source, la localisation, les dates et
+occurrences des événements, la provenance, la pagination et les erreurs
+évidentes. Les contacts, effectifs ou organisateurs sont également observés,
+mais leur absence ne rend ni une fiche ni une source invalide.
 
 L'ordre d'intégration envisagé après les deux sources du MVP est :
 
@@ -568,6 +607,9 @@ MVP.
 - L'utilisateur peut masquer une fiche. Un motif facultatif peut être choisi,
   par exemple « sans intérêt », « doublon », « information incorrecte » ou
   « autre ».
+- Lorsque le motif est « doublon », l'utilisateur peut facultativement
+  désigner la fiche conservée. Ce lien ne fusionne ni ne transfère aucun
+  contenu.
 - Une fiche masquée disparaît de toutes les listes, recherches et résultats
   ordinaires, mais son contenu complet reste en base.
 - Un onglet global « Fiches masquées » permet de rechercher et filtrer les
@@ -588,23 +630,35 @@ Une fiche normalisée peut regrouper plusieurs observations sources.
 
 Le rapprochement suit les principes suivants :
 
-1. un même fournisseur et un même identifiant externe mettent à jour la fiche
-   existante ;
+1. un même fournisseur et un même identifiant externe reconnu comme stable
+   mettent à jour la fiche existante ;
 2. un même identifiant d'établissement fiable, tel qu'un SIRET, permet un
    rapprochement automatique ;
 3. un identifiant de l'organisme, tel qu'un SIREN, ne suffit pas à fusionner
    ses implantations locales ;
 4. deux établissements physiques distincts d'une même entreprise ne sont pas
    des doublons ;
-5. deux descriptions d'une même édition d'événement peuvent être rapprochées
-   lorsque le titre, les dates, le lieu et l'organisateur concordent fortement ;
-6. une correspondance incertaine n'est jamais fusionnée silencieusement ;
-7. toutes les provenances d'une fiche fusionnée restent consultables ;
-8. un doublon restant peut être masqué manuellement afin que le même objet
-   source ne recrée pas une fiche visible.
+5. pour un événement, seul le même couple fournisseur-identifiant externe
+   stable permet de reconnaître automatiquement la même fiche ; pour la source
+   initiale, ce couple est formé de DATAtourisme et de son UUID ;
+6. pour les événements, deux identifiants externes différents restent deux
+   fiches distinctes, même lorsque leur titre, leurs dates, leur lieu ou leur
+   organisateur se ressemblent fortement ;
+7. ces ressemblances pourront servir ultérieurement à signaler un doublon
+   probable, mais jamais à provoquer seules une fusion automatique ;
+8. toutes les provenances d'une fiche regroupée restent consultables ;
+9. un doublon constaté par l'utilisateur peut être masqué et éventuellement
+   relié à la fiche conservée afin que le même objet source ne recrée pas une
+   fiche visible.
 
-La déduplication parfaite n'est pas un critère réaliste. La priorité est de
-réduire fortement les doublons certains sans créer de fausses fusions.
+La stabilité et l'unicité d'un identifiant externe sont vérifiées lors de la
+validation de chaque source. Si une source réutilise un identifiant entre des
+éditions commercialement distinctes, son adaptateur doit appliquer une règle
+d'identité spécifique documentée.
+
+La déduplication parfaite n'est pas un critère réaliste. Le MVP ne cherche pas
+automatiquement les doublons probables : sa priorité est d'éviter la création
+répétée d'une fiche certaine sans produire de fausses fusions.
 
 Dans le MVP, masquer un doublon ne fusionne pas son contenu avec la fiche
 conservée. Une fusion manuelle complète demanderait de choisir une fiche
@@ -631,17 +685,21 @@ Il comprend :
 - l'API Recherche d'Entreprises comme première source de prospects réguliers ;
 - l'API REST DATAtourisme comme première source d'événements ;
 - la conservation locale et la provenance des résultats ;
-- les règles de déduplication déterministes les plus fiables ;
+- la déduplication automatique limitée aux identifiants fiables ;
 - les listes et fiches détaillées des prospects réguliers et événements ;
 - les filtres, la recherche textuelle et les tris essentiels ;
+- la conservation d'une ou plusieurs périodes par fiche d'événement et la
+  collecte sans borne future maximale des occurrences non terminées publiées ;
+- l'import et le scoring des fiches même lorsqu'aucun moyen de contact n'est
+  connu ;
 - les scores déterministes visibles de 0 à 100 et leurs explications ;
 - la création et la modification manuelles de fiches ;
 - une note libre par fiche ;
 - le masquage et le démasquage des fiches ainsi qu'un onglet dédié aux fiches
   masquées ;
-- la conservation des événements passés sans affichage dans les listes
-  ordinaires, sauf lorsqu'une fiche explicitement masquée doit rester
-  accessible dans l'onglet de masquage ;
+- la conservation des événements passés sans accès dans l'interface ordinaire,
+  sauf lorsqu'une fiche explicitement masquée doit rester accessible dans
+  l'onglet de masquage ;
 - l'affichage de l'état et de la fraîcheur des collectes.
 
 Le MVP ne comprend pas :
@@ -673,7 +731,8 @@ Le MVP ne comprend pas :
 - rapprochement avancé, détection des doublons probables et fusion manuelle
   avec choix de la fiche principale, résolution des conflits et conservation
   des alias ;
-- regroupement des événements fortement récurrents en séries ;
+- regroupement automatique de plusieurs fiches distinctes d'événements
+  récurrents en séries ;
 - interface d'archive pour rechercher et consulter les événements passés ;
 - vue cartographique ;
 - CRM avec statuts, notes de prospection, historique des contacts, relances et
@@ -755,11 +814,14 @@ Le MVP est acceptable lorsque :
    Landes ;
 5. les prospects réguliers sont actualisés automatiquement une fois par mois
    et les événements chaque nuit selon le fuseau Europe/Paris ;
-6. une collecte réussie depuis l'API Recherche d'Entreprises et une autre
-   depuis l'API REST DATAtourisme créent des fiches normalisées, consultables
-   et accompagnées de leur provenance ;
-7. une seconde collecte identique ne recrée pas les fiches déjà identifiées et
-   deux collectes identiques ne s'exécutent pas simultanément ;
+6. les deux connecteurs ont été vérifiés manuellement sur un échantillon varié
+   dans la zone réelle de 50 km, puis une collecte complète réussie depuis
+   l'API Recherche d'Entreprises et une autre depuis l'API REST DATAtourisme
+   créent des fiches normalisées, consultables et accompagnées de leur
+   provenance ;
+7. une seconde collecte reconnaît le même couple fournisseur-identifiant
+   externe stable et met à jour la fiche au lieu de la recréer ; deux collectes
+   identiques ne s'exécutent pas simultanément ;
 8. une collecte de 50 km peut être filtrée localement à 30 km, et tout autre
    changement de filtre ou de tri peut être appliqué, sans nouvel appel
    externe ;
@@ -769,10 +831,12 @@ Le MVP est acceptable lorsque :
 10. un prospect régulier est localisé depuis son implantation physique et non
    depuis son seul siège juridique ;
 11. les prospects réguliers prennent en charge tous les filtres de la section
-    9.3, et les événements tous ceux de la section 9.4 ;
+    9.3, et les événements tous ceux de la section 9.4 ; une fiche sans contact
+    reste importée, visible et scorée ;
 12. chaque fiche importée affiche au minimum son fournisseur, un lien vers
     l'original lorsqu'il existe et sa date d'observation ; son identifiant
-    externe ou sa clé technique stable est conservé par le système ;
+    externe ou sa clé technique dont la stabilité a été vérifiée est conservé
+    par le système ;
 13. chaque fiche affiche un score compris entre 0 et 100 ainsi que le libellé
     et le sens, positif ou négatif, de chaque règle qui y a contribué ; aucun
     seuil ne cache automatiquement une fiche ;
@@ -785,9 +849,11 @@ Le MVP est acceptable lorsque :
 17. l'utilisateur peut masquer une fiche, la retrouver dans l'onglet « Fiches
     masquées » et la démasquer ; une collecte ne la recrée pas et ne la
     démasque pas lorsqu'elle est reconnue ;
-18. les événements passés restent en base sans apparaître dans les listes
-    ordinaires ; un événement explicitement masqué reste néanmoins accessible
-    dans l'onglet « Fiches masquées » même après être devenu passé ;
+18. les événements passés restent en base sans être accessibles dans
+    l'interface ordinaire ; une mise à jour source ajoutant une occurrence non
+    terminée les rend à nouveau visibles, et un événement explicitement masqué
+    reste accessible dans l'onglet « Fiches masquées » même après être devenu
+    passé ;
 19. un faible score, l'absence dans un filtre ou une observation devenue
     potentiellement obsolète ne provoque ni suppression ni masquage ;
 20. en cas d'échec total ou partiel d'un fournisseur, l'écran de collecte
@@ -796,7 +862,14 @@ Le MVP est acceptable lorsque :
 21. un contact central ou de portée inconnue n'est jamais présenté comme un
     contact confirmé de l'implantation locale ;
 22. en production, les accès utilisent HTTPS, le mot de passe n'est pas stocké
-    en clair et une session ne fonctionne plus après déconnexion ou expiration.
+    en clair et une session ne fonctionne plus après déconnexion ou expiration ;
+23. une fiche événementielle peut conserver plusieurs occurrences non
+    consécutives et reste visible tant qu'au moins l'une d'elles n'est pas
+    terminée ; un événement publié plusieurs mois ou années à l'avance est
+    collecté sans borne future maximale ;
+24. deux événements portant des identifiants externes différents ne sont
+    jamais fusionnés automatiquement dans le MVP ; l'utilisateur peut masquer
+    le doublon constaté et, facultativement, le relier à la fiche conservée.
 
 ## 14. Critères de succès produit
 
@@ -815,6 +888,9 @@ brut collecté :
 
 Les objectifs chiffrés de pertinence et de déduplication seront fixés après
 qualification manuelle d'un premier échantillon réel dans la zone d'activité.
+Le compte rendu de validation des sources consigne séparément leur couverture,
+les champs réellement disponibles, les limites de pagination et les anomalies
+observées.
 
 ## 15. Risques et hypothèses
 
@@ -849,6 +925,12 @@ spécialisés avant leur implémentation :
   dans `docs/data-sources.md` ;
 - règles, pondérations et exemples initiaux des deux scores, dans
   `docs/scoring.md` ;
+- protocole et résultat de la validation manuelle des deux sources dans la zone
+  réelle, y compris la récupération des occurrences non terminées sans borne
+  future maximale, dans `docs/data-sources.md` ;
+- mapping des périodes multiples et vérification de la stabilité des
+  identifiants événementiels, dans `docs/data-sources.md` et
+  `docs/database.md` ;
 - critères propres à chaque source pour déclarer une observation
   potentiellement obsolète et niveau d'historisation des anciennes valeurs,
   dans `docs/data-sources.md` et `docs/database.md` ;
