@@ -4,7 +4,8 @@
 >
 > Dernière mise à jour : 3 septembre 2026
 >
-> Périmètre initial : un utilisateur, un food truck, application web privée
+> Périmètre initial : un utilisateur, un food truck, France métropolitaine,
+> application web privée
 
 ## 1. Résumé
 
@@ -25,7 +26,7 @@ ou démasquer les fiches obtenues.
 
 Les Landes constituent le contexte commercial initial, mais pas une frontière
 fonctionnelle. Une zone de collecte peut couvrir librement les départements
-voisins.
+voisins. Radar couvre uniquement la France métropolitaine.
 
 ## 2. Problème à résoudre
 
@@ -93,7 +94,8 @@ Radar n'est pas :
 - une plateforme d'envoi massif d'emails ou de SMS ;
 - un système prenant seul une décision commerciale ;
 - une application destinée à collecter des coordonnées privées non
-  professionnelles.
+  professionnelles ;
+- un outil de découverte d'opportunités situées hors de France métropolitaine.
 
 ## 6. Définitions du domaine
 
@@ -101,7 +103,7 @@ Radar n'est pas :
 
 Adresse configurable par l'utilisateur et convertie en position géographique.
 Dans le MVP, elle sert de centre commun à la zone de collecte et au rayon de
-recherche.
+recherche. Elle doit être située en France métropolitaine.
 
 ### 6.2 Zone de collecte
 
@@ -110,8 +112,11 @@ ce rayon vaut 50 km par défaut et ne peut pas dépasser 50 km. Une collecte
 interroge les fournisseurs externes pour cette zone et stocke les résultats
 localement.
 
-La zone de collecte ne suit aucune frontière administrative. Elle peut sortir
-des Landes sans restriction et sans avertissement particulier.
+La zone de collecte ne suit aucune frontière départementale ou régionale. Elle
+peut sortir des Landes sans restriction et sans avertissement particulier,
+mais seules les opportunités situées en France métropolitaine sont collectées.
+Lorsqu'un cercle traverse une frontière nationale, sa partie étrangère reste
+hors scope et n'est pas présentée comme couverte.
 
 Chaque cycle de collecte conserve le connecteur exécuté, son centre, son rayon,
 ses dates de début et de fin ainsi que, pour chaque source ou jeu utilisé, sa
@@ -416,8 +421,10 @@ L'utilisateur peut :
   le MVP.
 - La position obtenue après géocodage doit pouvoir être vérifiée avant la
   collecte.
-- Une collecte peut couvrir n'importe quelle zone circulaire en France,
-  indépendamment des départements traversés.
+- Une collecte peut être centrée sur n'importe quelle adresse de France
+  métropolitaine, indépendamment des départements ou régions traversés.
+- Seule la partie française métropolitaine du cercle est couverte. Sa partie
+  éventuelle située à l'étranger ne donne lieu à aucune collecte.
 - Le MVP utilise le même centre pour la collecte et la recherche.
 - Modifier l'adresse recalcule les distances dans les données locales sans
   supprimer les anciennes données et sans lancer automatiquement une collecte.
@@ -828,6 +835,7 @@ Il comprend :
 - l'accès Internet protégé par connexion pour un compte unique ;
 - le changement du mot de passe depuis les réglages ;
 - une adresse de référence configurable ;
+- une couverture limitée à la France métropolitaine ;
 - un rayon de collecte de 50 km par défaut et limité à 50 km ;
 - un rayon de recherche local distinct, réglable jusqu'à 50 km ;
 - le lancement manuel des collectes ;
@@ -979,9 +987,10 @@ Le MVP est acceptable lorsque :
 2. l'utilisateur peut se connecter et se déconnecter avec son compte unique,
    puis changer son mot de passe en fournissant le mot de passe actuel et deux
    saisies identiques du nouveau ; les autres sessions sont alors invalidées ;
-3. il peut saisir ou modifier une adresse, vérifier sa position et définir un
-   rayon de collecte valant 50 km par défaut et limité à 50 km, sans supprimer
-   les données existantes ni déclencher immédiatement une collecte ;
+3. il peut saisir ou modifier une adresse située en France métropolitaine,
+   vérifier sa position et définir un rayon de collecte valant 50 km par défaut
+   et limité à 50 km, sans supprimer les données existantes ni déclencher
+   immédiatement une collecte ;
 4. il peut lancer manuellement une collecte qui dépasse les frontières des
    Landes ;
 5. les prospects réguliers sont actualisés automatiquement une fois par mois
@@ -1134,39 +1143,31 @@ observées.
 - L'hébergement sur Internet impose une configuration sécurisée même si
   l'application ne compte qu'un utilisateur.
 
-## 16. Décisions de mise en œuvre restant à documenter
+## 16. Décisions et validations restant ouvertes
 
-Les décisions produit principales sont arrêtées. Les points suivants ne
-changent pas le périmètre du MVP, mais devront être précisés dans les documents
-spécialisés avant leur implémentation :
+Les documents spécialisés définissent désormais l'architecture, le modèle de
+données, les sources, le scoring et l'ordre de réalisation. Les décisions
+produit principales sont arrêtées. Les points suivants ne changent pas le
+périmètre du MVP, mais doivent être clos avant l'implémentation ou la mise en
+production concernée :
 
-- référentiel des communes, calcul de leur intersection avec le cercle,
-  fournisseur de géocodage de repli et procédure de correction d'une position
-  erronée, dans `docs/data-sources.md` ;
-- règles, pondérations et exemples initiaux des deux scores, dans
-  `docs/scoring.md` ;
-- protocole et résultat de la validation manuelle des deux connecteurs métier
-  dans la zone réelle, y compris la récupération des occurrences non terminées
-  sans borne future maximale, dans `docs/data-sources.md` ;
-- requête de l'état courant dans l'API Sirene, sélection des établissements
-  actifs pour lesquels l'établissement et l'unité légale sont en diffusion
-  totale, pagination par curseur, lots de communes, contrôle des totaux, reprise
-  après erreur et quotas, dans
-  `docs/data-sources.md` et `docs/architecture.md` ;
-- téléchargement et versionnement du jeu officiel de géolocalisation Sirene,
-  jointure par SIRET, niveaux de qualité, géocodage de repli et traitement des
-  localisations indéterminées, dans `docs/data-sources.md` et
-  `docs/database.md` ;
-- contrôle ciblé des SIRET connus absents de la sélection active et traitement
-  d'un changement de régime de diffusion, dans `docs/data-sources.md` et
-  `docs/database.md` ;
-- mapping des périodes multiples et vérification de la stabilité des
-  identifiants événementiels, dans `docs/data-sources.md` et
-  `docs/database.md` ;
-- critères propres à chaque source pour déclarer une observation
-  potentiellement obsolète et niveau d'historisation des anciennes valeurs,
-  dans `docs/data-sources.md` et `docs/database.md` ;
-- heure exacte, politique de reprise et supervision des collectes mensuelles et
-  nocturnes, dans `docs/architecture.md` ;
-- création initiale du compte unique et commande ou procédure administrative
-  de remplacement d'un mot de passe oublié, dans `docs/architecture.md`.
+- tester avec une clé réelle la requête d'état courant, les curseurs, les lots
+  et les contrôles de totaux de l'API Sirene ;
+- comparer autour de Dax les coordonnées de l'API Sirene 3.11, le fichier
+  mensuel officiel et le géocodage de repli, puis décider si le fichier reste
+  dans le MVP et fixer les niveaux de qualité acceptables ;
+- valider sur des réponses DATAtourisme réelles les champs, les périodes, les
+  contacts, les statuts et les formes de pagination `next` ;
+- vérifier si un UUID DATAtourisme reste propre à une édition ou s'il faut une
+  identité d'édition spécifique pour les événements récurrents ;
+- valider les données qui peuvent licitement être conservées, retirées ou
+  transformées lorsqu'un établissement Sirene passe en diffusion partielle ;
+- qualifier manuellement l'échantillon de Dax et ajuster les pondérations et
+  mappings initiaux des scores ;
+- arrêter le frontend avant le jalon qui introduit l'interface de connexion ;
+- calibrer sur l'hébergement réel les paramètres de sécurité, les tailles de
+  lots et le mode d'exploitation avant leur mise en production.
+
+Le détail, le protocole et l'échéance de ces décisions figurent dans
+`docs/data-sources.md`, `docs/scoring.md`, `docs/architecture.md`,
+`docs/database.md` et `docs/roadmap.md`.
