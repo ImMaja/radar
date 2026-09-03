@@ -2,7 +2,7 @@
 
 > Statut : cadrage produit validé
 >
-> Dernière mise à jour : 2 septembre 2026
+> Dernière mise à jour : 3 septembre 2026
 >
 > Périmètre initial : un utilisateur, un food truck, application web privée
 
@@ -113,11 +113,45 @@ localement.
 La zone de collecte ne suit aucune frontière administrative. Elle peut sortir
 des Landes sans restriction et sans avertissement particulier.
 
-Chaque collecte réussie conserve la source interrogée, son centre, son rayon
-et sa date. Dans le MVP, la couverture active d'une source correspond à sa
-dernière collecte réussie autour de l'adresse de référence courante. Les
-données d'anciennes zones restent consultables, mais ne prouvent pas que la
-zone courante a été entièrement collectée.
+Chaque cycle de collecte conserve le connecteur exécuté, son centre, son rayon,
+ses dates de début et de fin ainsi que, pour chaque source ou jeu utilisé, sa
+date de publication ou de mise à jour. Un cycle est réussi uniquement lorsque
+toute la pagination et toutes les étapes prévues ont été exécutées sans erreur
+ni troncature.
+
+Un connecteur est l'intégration d'une famille de données externes dans Radar.
+Il peut combiner plusieurs sources : le connecteur Sirene utilise par exemple
+l'API Sirene pour les établissements et un jeu distinct pour leur
+géolocalisation. La provenance de ces sources reste séparée.
+
+Pour les prospects Sirene, un cycle complet doit :
+
+- énumérer toutes les communes dont le territoire intersecte le cercle de
+  collecte ;
+- interroger l'état courant des établissements administrativement actifs pour
+  lesquels le statut de diffusion de l'établissement et celui de son unité
+  légale sont tous deux en diffusion totale (`O`) dans ces communes, et dont la
+  réutilisation pour la prospection est autorisée ;
+- n'appliquer aucun filtre commercial d'activité pendant cette énumération ;
+  l'activité sert ensuite aux filtres et au scoring dans la base locale ;
+- pour chaque requête ou lot de communes, parcourir la pagination par curseur
+  jusqu'à son terme et comptabiliser tous les résultats annoncés par l'API ;
+- vérifier les totaux annoncés pour chaque requête, puis le nombre global de
+  SIRET uniques reçus ;
+- appliquer le jeu officiel de géolocalisation retenu et classer chaque
+  établissement candidat comme situé dans le rayon, hors du rayon ou à
+  localisation indéterminée.
+
+Un tel succès garantit que tous les résultats annoncés par les requêtes du
+cycle ont été reçus et comptabilisés. L'API étant consultée en direct, il ne
+constitue pas un instantané atomique du répertoire à une seconde précise. Il ne
+garantit pas non plus que tout organisme réel soit inscrit dans Sirene, que
+toute donnée protégée soit réutilisable, ni que toute adresse publiée soit
+exacte ou géolocalisable.
+
+Dans le MVP, la couverture active d'un connecteur correspond à son dernier
+cycle réussi autour de l'adresse de référence courante. Les données d'anciennes
+zones restent consultables.
 
 ### 6.3 Rayon de recherche
 
@@ -127,8 +161,8 @@ exemple, être consultée avec un rayon de recherche de 30 km.
 
 Dans le MVP, il est réglable jusqu'à 50 km. Modifier ce rayon ne déclenche
 jamais de collecte externe. S'il dépasse la couverture effectivement collectée
-pour une source, l'application signale seulement que les résultats de cette
-source peuvent être incomplets.
+par un connecteur, l'application signale seulement que les résultats de ce
+connecteur peuvent être incomplets.
 
 ### 6.4 Prospect régulier
 
@@ -202,12 +236,13 @@ utilisateur et une note libre.
 
 ### 6.10 Observation source
 
-Enregistrement reçu d'un fournisseur externe. Il conserve au minimum le nom
-du fournisseur, son identifiant externe ou une clé technique dont la stabilité
-et l'unicité ont été vérifiées lorsqu'il n'en fournit pas, son URL lorsqu'elle
-existe, sa date de collecte et sa date de mise à jour lorsqu'elle est fournie.
-Une clé technique sert à reconnaître une observation de cette source ; elle ne
-constitue jamais à elle seule un identifiant commun à plusieurs fournisseurs.
+Enregistrement reçu d'un fournisseur externe. Tant que les règles applicables
+en autorisent la conservation, il conserve au minimum le nom du fournisseur,
+son identifiant externe ou une clé technique dont la stabilité et l'unicité ont
+été vérifiées lorsqu'il n'en fournit pas, son URL lorsqu'elle existe, sa date de
+collecte et sa date de mise à jour lorsqu'elle est fournie. Une clé technique
+sert à reconnaître une observation de cette source ; elle ne constitue jamais
+à elle seule un identifiant commun à plusieurs fournisseurs.
 
 ### 6.11 Score commercial
 
@@ -218,13 +253,14 @@ prévision de vente, ni une garantie de fréquentation.
 ### 6.12 Fiche masquée
 
 Fiche que l'utilisateur a volontairement retirée des listes et recherches
-ordinaires. Elle reste entièrement conservée, continue d'être reconnue par la
-déduplication et peut recevoir les mises à jour de ses observations externes.
-Seul l'utilisateur peut la démasquer.
+ordinaires. Hors traitement de conformité obligatoire, elle reste entièrement
+conservée, continue d'être reconnue par la déduplication et peut recevoir les
+mises à jour de ses observations externes. Seul l'utilisateur peut la
+démasquer.
 
-Le masquage ne doit pas être confondu avec l'état passé d'un événement, un
-faible score ou l'absence d'une fiche dans un filtre. Ces trois situations ne
-modifient pas l'état de masquage.
+Le masquage ne doit pas être confondu avec l'état administratif inactif d'un
+prospect, l'état passé d'un événement, un faible score ou l'absence d'une fiche
+dans un filtre. Ces situations ne modifient pas l'état de masquage.
 
 ### 6.13 Observation potentiellement obsolète
 
@@ -232,6 +268,34 @@ Information externe remplacée ou qui n'est plus confirmée par sa source, par
 exemple un ancien numéro de téléphone, une date corrigée ou une fiche qui
 n'est plus revue lors de collectes comparables. Cela ne désigne jamais une
 fiche à faible score ou écartée par les filtres.
+
+### 6.14 État administratif d'un prospect
+
+Dans Sirene, un établissement est actif ou fermé, tandis que son unité légale
+est active ou cessée. Ces deux informations décrivent une situation
+administrative et ne correspondent jamais aux horaires d'ouverture quotidiens
+d'un commerce.
+
+Un établissement déjà fermé ou rattaché à une unité légale cessée lors de sa
+première découverte n'est pas créé comme prospect dans le MVP. Lorsqu'un
+établissement déjà connu ferme ou que son unité légale cesse, sa fiche, ses
+provenances, ses corrections et sa note restent conservées sous réserve des
+obligations légales ou de diffusion, mais elle est exclue des listes ordinaires.
+
+La découverte initiale étant limitée aux établissements actifs, tout SIRET
+déjà connu qui disparaît de cette sélection est contrôlé explicitement auprès
+de Sirene dans son état courant. Seule une réponse explicite indiquant sa
+fermeture ou la cessation de son unité légale peut faire évoluer la fiche vers
+cet état. Une absence, une erreur de collecte ou une restriction de diffusion
+ne constitue jamais une preuve de fermeture.
+
+Cet état reste distinct du masquage volontaire. Une fiche administrativement
+inactive n'apparaît pas dans l'onglet « Fiches masquées » pour ce seul motif.
+Si son établissement et son unité légale sont ensuite de nouveau déclarés
+actifs, son état administratif est réactivé. Elle ne redevient visible dans les
+listes de prospection que si les statuts de diffusion et les règles de
+réutilisation l'autorisent, et si l'utilisateur ne l'avait pas également
+masquée.
 
 ## 7. Principes et invariants produit
 
@@ -248,8 +312,10 @@ fiche à faible score ou écartée par les filtres.
 8. Tout score est accompagné des règles qui y ont contribué et du sens de leur
    impact.
 9. Toute donnée externe conservée garde sa provenance et sa fraîcheur.
-10. Une correction ou une note utilisateur survit aux synchronisations.
-11. Une fusion de doublons conserve toutes les provenances connues.
+10. Une correction ou une note utilisateur survit aux synchronisations, sous
+    réserve de l'exception de conformité définie au point 19.
+11. Une fusion de doublons conserve toutes les provenances dont la conservation
+    reste autorisée.
 12. Un rapprochement incertain ne provoque jamais une fusion silencieuse.
 13. Une fiche masquée ne doit pas être recréée ni démasquée par une collecte
     tant que son identité reste reconnaissable.
@@ -257,6 +323,19 @@ fiche à faible score ou écartée par les filtres.
     une fiche.
 15. L'échec d'un fournisseur ne rend pas indisponibles les données déjà
     collectées.
+16. Seul un état administratif explicite provenant d'une source fiable peut
+    rendre automatiquement un prospect connu inactif ou le réactiver ; sa
+    simple absence lors d'une collecte ne suffit pas.
+17. Aucun établissement candidat actif et réutilisable pour la prospection
+    n'est écarté au seul motif que sa position est absente ou incertaine ; il
+    reste visible avec une localisation à vérifier.
+18. Les informations dont la diffusion ou la réutilisation pour la prospection
+    est interdite ne sont ni utilisées pour créer une opportunité, ni exposées
+    comme données de contact.
+19. Une obligation de diffusion ou de conformité prévaut sur la conservation
+    ordinaire des observations, corrections et notes ; une donnée saisie
+    manuellement ne peut pas servir à contourner une restriction de
+    prospection.
 
 ## 8. Parcours utilisateur principaux
 
@@ -275,7 +354,11 @@ fiche à faible score ou écartée par les filtres.
 4. Il peut lancer explicitement la collecte sans attendre la prochaine
    exécution planifiée.
 5. L'application affiche son état, ses erreurs éventuelles et la date du
-   dernier succès pour chaque source.
+   dernier succès pour chaque connecteur.
+6. Pour Sirene, le bilan affiche les communes terminées ou en échec, compare
+   pour chaque requête le total annoncé au nombre de SIRET uniques reçus et
+   distingue les établissements confirmés dans le rayon, ceux écartés après
+   calcul de distance et ceux dont la localisation reste à vérifier.
 
 Changer l'adresse ne supprime pas les données déjà collectées. Une nouvelle
 collecte manuelle ou planifiée doit réussir pour alimenter correctement la
@@ -344,20 +427,28 @@ L'utilisateur peut :
 - Si une recherche dépasse la couverture réellement collectée, l'application
   indique que les résultats peuvent être incomplets. Cet avertissement porte
   sur la couverture des données, jamais sur la sortie des Landes.
-- La couverture est évaluée séparément pour chaque source à partir de sa
+- La couverture est évaluée séparément pour chaque connecteur à partir de sa
   dernière collecte réussie autour de l'adresse courante.
-- Le cercle de recherche est couvert par une source uniquement s'il est inclus
-  dans le cercle de cette dernière collecte réussie. Cette indication décrit
-  le périmètre interrogé ; elle ne garantit pas que la source y soit
-  exhaustive.
+- Le cercle de recherche est couvert par un connecteur uniquement s'il est
+  inclus dans le cercle de cette dernière collecte réussie. Cette indication
+  décrit le périmètre interrogé et le niveau de complétude défini pour ce
+  connecteur ; elle ne garantit pas que ses sources représentent tout ce qui
+  existe dans le monde réel.
 - La distance affichée et filtrée est calculée à vol d'oiseau.
-- Une fiche sans position fiable reste accessible dans une liste de données
-  non géolocalisées, mais elle n'apparaît pas dans un filtre par rayon.
+- La position d'un établissement Sirene est d'abord recherchée par jointure de
+  son SIRET avec le jeu officiel de géolocalisation, puis, si nécessaire et si
+  son adresse est publique, par un géocodage de repli.
+- Un établissement actif, réutilisable pour la prospection et situé dans une
+  commune candidate qui reste sans position fiable est conservé dans une liste
+  « Localisation à vérifier ». Sa distance est inconnue et il n'apparaît pas
+  arbitrairement dans un filtre par rayon, mais il reste visible afin de ne
+  jamais constituer un oubli silencieux.
 - Une correction d'adresse peut déclencher un nouveau géocodage et un nouveau
   calcul de distance.
 - Les limites de pagination ou de volume d'un fournisseur sont gérées par son
-  adaptateur, notamment en subdivisant la zone si nécessaire. Une collecte
-  tronquée ne doit jamais être présentée comme une couverture complète.
+  adaptateur. Une interruption, un curseur inachevé, une incohérence de
+  comptage ou une étape inachevée rend la collecte partielle ; elle n'est jamais
+  présentée comme ayant couvert tout son périmètre déclaré.
 
 ### 9.3 Prospects réguliers
 
@@ -405,6 +496,18 @@ Une fiche sans moyen de contact reste une fiche valide et visible. Lorsqu'une
 source ne fournit pas un type de contact, celui-ci est inconnu et non considéré
 comme définitivement absent. Les filtres de présence sélectionnent uniquement
 les fiches pour lesquelles le moyen demandé est effectivement connu.
+
+La découverte Sirene retient les établissements dont l'état courant est actif
+et pour lesquels le statut de diffusion de l'établissement et celui de son
+unité légale sont tous deux en diffusion totale (`O`) et dont la réutilisation
+pour la prospection est autorisée. Elle écarte les établissements déjà fermés
+ou rattachés à une unité légale cessée lors de leur première découverte.
+
+Tout SIRET connu qui ne figure plus dans cette sélection active est ensuite
+contrôlé directement. Seul un état administratif explicite et fiable peut
+rendre un prospect connu inactif ; sa simple absence lors d'une collecte ne
+suffit pas. Aucun établissement candidat n'est écarté silencieusement faute de
+coordonnées fiables.
 
 ### 9.4 Événements
 
@@ -531,14 +634,15 @@ traitent les inconnues de manière neutre et classent globalement les cas
 
 ### 9.7 Sources, synchronisation et provenance
 
-- La première source de prospects réguliers du MVP est l'API Recherche
-  d'Entreprises. L'opportunité importée correspond à l'établissement local,
-  identifié par son SIRET lorsqu'il existe, et non à la seule unité légale
-  identifiée par son SIREN.
-- La première source d'événements du MVP est l'API REST DATAtourisme.
-- La couverture réelle de ces deux sources autour de l'adresse de référence
-  est vérifiée sur un échantillon avant de considérer leurs connecteurs comme
-  validés.
+- Le connecteur de prospects réguliers du MVP utilise l'API Sirene open data
+  de l'Insee pour obtenir les établissements et le jeu officiel mensuel de
+  géolocalisation Sirene pour obtenir leurs coordonnées.
+- L'opportunité importée correspond à l'établissement local identifié par son
+  SIRET, et non à la seule unité légale identifiée par son SIREN.
+- Le connecteur événementiel du MVP utilise l'API REST DATAtourisme.
+- Le connecteur Sirene et le connecteur DATAtourisme sont vérifiés dans la zone
+  réelle avant d'être considérés comme validés. Le premier combine deux jeux
+  officiels dont les provenances et dates restent distinctes.
 - De nouvelles sources sont ajoutées progressivement lorsque leur couverture,
   leur qualité et leur coût de normalisation le justifient.
 - Les prospects réguliers sont actualisés automatiquement une fois par mois et
@@ -553,8 +657,9 @@ traitent les inconnues de manière neutre et classent globalement les cas
   d'adresse ou de rayon, sans attendre la prochaine exécution planifiée.
 - Deux collectes identiques ne s'exécutent jamais simultanément.
 - Relancer une collecte ne doit pas recréer une fiche déjà identifiée.
-- Une source peut actualiser ses observations, mais jamais les corrections ou
-  notes de l'utilisateur.
+- Une source peut actualiser ses observations sans écraser les corrections ou
+  notes de l'utilisateur, sous réserve des obligations de diffusion décrites
+  ci-dessous.
 - Une collecte peut actualiser les observations externes d'une fiche masquée,
   mais ne peut jamais la démasquer.
 - La date de dernière observation d'une donnée externe est conservée. Une
@@ -564,28 +669,69 @@ traitent les inconnues de manière neutre et classent globalement les cas
   d'un signal fiable propre à sa source ou d'absences répétées lors de
   collectes réussies et comparables. Les règles précises sont définies par
   source.
-- Un échec partiel indique clairement quelles sources ou zones n'ont pas été
-  actualisées.
+- Seule la fermeture d'un établissement ou la cessation de son unité légale,
+  fournie explicitement par une source jugée fiable, peut rendre un prospect
+  connu administrativement inactif. Son état administratif est réactivé si
+  l'établissement et l'unité légale sont ensuite déclarés actifs ; il ne
+  réintègre les listes de prospection que si les statuts de diffusion et les
+  règles de réutilisation l'autorisent.
+- Un échec partiel indique clairement quels connecteurs, requêtes ou jeux n'ont
+  pas été actualisés.
 - Une collecte échouée ne supprime et ne masque aucune donnée déjà conservée.
-- Chaque observation externe conservée garde sa provenance, même lorsque
-  plusieurs sources sont regroupées dans une fiche.
+- Chaque observation externe conservée conformément aux règles applicables
+  garde sa provenance, même lorsque plusieurs sources sont regroupées dans une
+  fiche.
 
-La validation manuelle initiale des connecteurs utilise la zone réelle de
-50 km et un ensemble varié de prospects et d'événements. Elle vérifie au
-minimum l'identité stable fournie par la source, la localisation, les dates et
-occurrences des événements, la provenance, la pagination et les erreurs
-évidentes. Les contacts, effectifs ou organisateurs sont également observés,
-mais leur absence ne rend ni une fiche ni une source invalide.
+Pour chaque cycle Sirene, Radar :
 
-L'ordre d'intégration envisagé après les deux sources du MVP est :
+1. détermine, depuis un référentiel géographique officiel, toutes les communes
+   dont le territoire intersecte le cercle de collecte ;
+2. interroge l'API Sirene sur l'état courant des établissements actifs de ces
+   communes, dont le statut de diffusion et celui de leur unité légale sont
+   tous deux en diffusion totale et dont la réutilisation pour la prospection
+   est autorisée, sans appliquer de filtre commercial d'activité ;
+3. suit la pagination par curseur jusqu'au dernier résultat et contrôle les
+   totaux annoncés pour chaque requête, les pages reçues et les SIRET uniques ;
+4. joint les établissements au fichier officiel de géolocalisation par SIRET,
+   puis tente un géocodage de l'adresse publique lorsque la position reste
+   absente ou insuffisamment fiable ;
+5. calcule la distance exacte à vol d'oiseau et classe chaque établissement
+   candidat dans le rayon, hors du rayon ou dans « Localisation à vérifier » ;
+6. contrôle séparément l'état courant des SIRET déjà connus qui ont disparu de
+   la sélection active avant de décider d'une fermeture ou d'une cessation.
+
+Si un établissement ou son unité légale passe en diffusion partielle (`P`),
+cela ne signifie ni que l'établissement est fermé ni que l'unité légale est
+cessée. La fiche devient immédiatement « non prospectable — diffusion
+restreinte » et sort des listes, recherches, filtres et scores d'opportunités
+ordinaires. Les données externes qui ne sont plus réutilisables pour la
+prospection ne sont plus affichées ni utilisées. Radar conserve uniquement les
+éléments dont la conservation reste autorisée et qui sont nécessaires pour
+reconnaître la restriction et éviter une réimportation incorrecte. Les
+corrections et notes utilisateur ne servent jamais à contourner cette
+restriction ; elles ne sont conservées que si leur conservation possède un
+fondement indépendant et licite. Les champs précis à retirer, anonymiser ou
+conserver sont documentés et validés avant l'implémentation du connecteur.
+
+La validation manuelle initiale des connecteurs utilise un cercle réel de
+50 km centré sur l'adresse géocodée et vérifiée de la mairie de Dax, ainsi qu'un
+ensemble varié de prospects et d'événements. Pour Sirene, elle vérifie
+notamment l'état courant, le régime de diffusion, la pagination complète, la
+concordance des totaux, la jointure par SIRET, la qualité des coordonnées et
+les localisations restant à vérifier. Pour DATAtourisme, elle vérifie notamment
+les identifiants, la localisation, les dates, les occurrences et la pagination.
+La provenance et les erreurs évidentes sont vérifiées dans les deux cas.
+L'absence de contacts, d'effectifs ou d'organisateur ne rend ni une fiche ni
+une source invalide.
+
+L'ordre d'intégration envisagé après les deux connecteurs métier du MVP est :
 
 1. l'annuaire officiel de l'administration française, pour compléter les
    administrations et leurs contacts publics ;
 2. le Répertoire National des Associations, pour les associations absentes de
-   SIRENE ;
+   Sirene ;
 3. OpenAgenda, comme complément événementiel ;
-4. les données SIRENE directes et les agendas locaux si leur gain de couverture
-   justifie leur complexité.
+4. les agendas locaux si leur gain de couverture justifie leur complexité.
 
 L'enrichissement automatique depuis les sites officiels n'appartient pas au
 MVP.
@@ -603,7 +749,8 @@ MVP.
   distincte de la valeur externe originale.
 - L'utilisateur peut identifier la provenance d'une valeur et restaurer la
   valeur source.
-- Chaque fiche possède une note libre protégée des synchronisations.
+- Chaque fiche possède une note libre protégée des synchronisations, sous
+  réserve d'une obligation légale ou de diffusion contraire.
 - L'utilisateur peut masquer une fiche. Un motif facultatif peut être choisi,
   par exemple « sans intérêt », « doublon », « information incorrecte » ou
   « autre ».
@@ -611,15 +758,18 @@ MVP.
   désigner la fiche conservée. Ce lien ne fusionne ni ne transfère aucun
   contenu.
 - Une fiche masquée disparaît de toutes les listes, recherches et résultats
-  ordinaires, mais son contenu complet reste en base.
+  ordinaires, mais son contenu complet reste en base hors traitement imposé
+  par une restriction de diffusion ou une obligation légale.
 - Un onglet global « Fiches masquées » permet de rechercher et filtrer les
   fiches masquées par famille, de consulter leur motif et de les démasquer.
 - Une fiche masquée reste prise en compte par la déduplication. Une collecte
   peut mettre à jour ses observations sources, mais ne peut ni la recréer sous
   la forme d'une nouvelle fiche lorsqu'elle est reconnue, ni la démasquer.
-- Démasquer une fiche la rend à nouveau visible avec ses corrections, sa note,
-  ses provenances et ses observations à jour.
-- Aucune suppression définitive de fiche n'est proposée dans le MVP.
+- Démasquer une fiche la rend à nouveau visible avec les corrections, la note,
+  les provenances et les observations dont la conservation reste autorisée.
+- Aucune suppression définitive de fiche à l'initiative de l'utilisateur n'est
+  proposée dans le MVP. Cette règle n'empêche pas un retrait ou une
+  anonymisation imposé par une obligation légale ou de diffusion.
 
 Le masquage d'une édition d'événement ne s'applique pas automatiquement aux
 éditions futures du même événement.
@@ -646,7 +796,8 @@ Le rapprochement suit les principes suivants :
    organisateur se ressemblent fortement ;
 7. ces ressemblances pourront servir ultérieurement à signaler un doublon
    probable, mais jamais à provoquer seules une fusion automatique ;
-8. toutes les provenances d'une fiche regroupée restent consultables ;
+8. toutes les provenances d'une fiche regroupée dont la conservation reste
+   autorisée restent consultables ;
 9. un doublon constaté par l'utilisateur peut être masqué et éventuellement
    relié à la fiche conservée afin que le même objet source ne recrée pas une
    fiche visible.
@@ -682,8 +833,11 @@ Il comprend :
 - le lancement manuel des collectes ;
 - l'actualisation automatique mensuelle des prospects réguliers et nocturne
   quotidienne des événements ;
-- l'API Recherche d'Entreprises comme première source de prospects réguliers ;
+- l'API Sirene open data de l'Insee et le jeu officiel de géolocalisation
+  Sirene comme premières sources des prospects réguliers ;
 - l'API REST DATAtourisme comme première source d'événements ;
+- la pagination complète de Sirene, le contrôle des totaux par requête et la
+  comptabilisation de chaque SIRET candidat ;
 - la conservation locale et la provenance des résultats ;
 - la déduplication automatique limitée aux identifiants fiables ;
 - les listes et fiches détaillées des prospects réguliers et événements ;
@@ -692,6 +846,14 @@ Il comprend :
   collecte sans borne future maximale des occurrences non terminées publiées ;
 - l'import et le scoring des fiches même lorsqu'aucun moyen de contact n'est
   connu ;
+- l'exclusion des établissements déjà fermés ou rattachés à une unité légale
+  cessée lors de leur première découverte, ainsi que la conservation et la
+  réactivation éventuelle des prospects connus dont l'état administratif
+  évolue ;
+- le retrait des listes de prospection et le traitement conforme des fiches
+  dont l'établissement ou l'unité légale passe en diffusion partielle ;
+- une liste « Localisation à vérifier » pour les établissements actifs et
+  réutilisables des communes candidates qui restent sans position fiable ;
 - les scores déterministes visibles de 0 à 100 et leurs explications ;
 - la création et la modification manuelles de fiches ;
 - une note libre par fiche ;
@@ -711,7 +873,7 @@ Le MVP ne comprend pas :
 - de crawl généraliste des sites web ;
 - d'intégration simultanée de toutes les sources ;
 - de synchronisation continue ou temps réel ;
-- de suppression définitive des fiches ;
+- de suppression définitive des fiches à l'initiative de l'utilisateur ;
 - de fusion manuelle complète avec résolution des conflits ;
 - d'interface d'archive pour consulter les événements passés ;
 - de distance routière ;
@@ -724,8 +886,6 @@ Le MVP ne comprend pas :
   Répertoire National des Associations ;
 - ajout d'OpenAgenda comme source événementielle complémentaire, puis
   d'agendas locaux lorsque leur apport est démontré ;
-- recours aux données SIRENE directes si le gain d'exhaustivité justifie la
-  complexité supplémentaire ;
 - enrichissement contrôlé depuis les sites web officiels ;
 - réglage avancé de la fréquence et des horaires de collecte si nécessaire ;
 - rapprochement avancé, détection des doublons probables et fusion manuelle
@@ -785,14 +945,26 @@ Les mécanismes techniques précis relèvent de `docs/architecture.md`.
 - Les données déjà collectées restent consultables en cas d'indisponibilité
   d'un fournisseur.
 - Les dates de collecte et de dernière observation sont visibles.
+- La date et l'heure de chaque requête Sirene, la date de dernière mise à jour
+  annoncée par Sirene, le millésime ou la date de publication du jeu de
+  géolocalisation et la date d'un éventuel géocodage de repli restent
+  distinguables.
 - Les données absentes, inconnues, obsolètes ou corrigées sont distinguables.
-- Les fiches masquées, les événements passés et les observations
-  potentiellement obsolètes sont trois états distincts.
+- Les fiches masquées, les prospects administrativement inactifs, les fiches
+  non prospectables pour restriction de diffusion, les événements passés et
+  les observations potentiellement obsolètes sont des états distincts.
 
 ### 12.4 Conformité
 
 - La collecte se limite aux informations professionnelles publiques utiles au
   produit.
+- Seules les données Sirene en diffusion totale et réutilisables pour la
+  prospection alimentent les opportunités. Un passage ultérieur en diffusion
+  partielle interrompt l'utilisation des données externes désormais protégées
+  sans être interprété comme une fermeture.
+- Une restriction de diffusion prévaut sur la conservation ordinaire des
+  observations et sur les corrections utilisateur ; aucune donnée locale ne
+  sert à contourner une opposition à la prospection.
 - La provenance des coordonnées de contact est conservée.
 - Les licences et conditions d'utilisation de chaque fournisseur doivent être
   validées avant son intégration.
@@ -814,62 +986,90 @@ Le MVP est acceptable lorsque :
    Landes ;
 5. les prospects réguliers sont actualisés automatiquement une fois par mois
    et les événements chaque nuit selon le fuseau Europe/Paris ;
-6. les deux connecteurs ont été vérifiés manuellement sur un échantillon varié
-   dans la zone réelle de 50 km, puis une collecte complète réussie depuis
-   l'API Recherche d'Entreprises et une autre depuis l'API REST DATAtourisme
-   créent des fiches normalisées, consultables et accompagnées de leur
-   provenance ;
+6. le connecteur de prospects Sirene et le connecteur événementiel
+   DATAtourisme ont été vérifiés manuellement dans un cercle de 50 km centré sur
+   l'adresse géocodée et vérifiée de la mairie de Dax ;
+   chaque connecteur parcourt toute sa pagination, crée des fiches normalisées
+   accompagnées de leur provenance et signale comme partiel tout cycle qui ne
+   peut pas terminer les étapes prévues ;
 7. une seconde collecte reconnaît le même couple fournisseur-identifiant
    externe stable et met à jour la fiche au lieu de la recréer ; deux collectes
    identiques ne s'exécutent pas simultanément ;
 8. une collecte de 50 km peut être filtrée localement à 30 km, et tout autre
    changement de filtre ou de tri peut être appliqué, sans nouvel appel
    externe ;
-9. une recherche dépassant la dernière couverture réussie d'une source est
+9. une recherche dépassant la dernière couverture réussie d'un connecteur est
    signalée comme potentiellement incomplète, sans avertissement lié aux
    frontières administratives ;
-10. un prospect régulier est localisé depuis son implantation physique et non
-   depuis son seul siège juridique ;
-11. les prospects réguliers prennent en charge tous les filtres de la section
+10. un prospect Sirene correspond à son établissement local identifié par son
+    SIRET, et non au seul siège ou à la seule unité légale ; toutes les communes
+    intersectant le cercle sont interrogées sans filtre commercial d'activité,
+    chaque curseur est suivi jusqu'à son terme et les résultats reçus sont
+    rapprochés du total annoncé pour chaque requête ; chaque établissement
+    actif dont le statut de diffusion et celui de son unité légale sont tous
+    deux en diffusion totale, et dont la réutilisation pour la prospection est
+    autorisée, est comptabilisé comme situé dans le rayon, hors du rayon ou à
+    localisation indéterminée ;
+11. un établissement déjà fermé ou rattaché à une unité légale cessée lors de
+    sa première découverte n'est pas importé ; si un prospect connu acquiert
+    ensuite l'un de ces états, sa fiche reste en base mais disparaît des listes
+    ordinaires sans devenir une fiche masquée ; son état administratif est
+    réactivé lorsque l'établissement et l'unité légale sont de nouveau actifs,
+    mais la fiche ne redevient visible que si sa diffusion et sa réutilisation
+    pour la prospection sont autorisées et qu'elle n'est pas volontairement
+    masquée ; tout SIRET connu absent de la sélection active est contrôlé
+    explicitement avant ce changement d'état ;
+12. les prospects réguliers prennent en charge tous les filtres de la section
     9.3, et les événements tous ceux de la section 9.4 ; une fiche sans contact
     reste importée, visible et scorée ;
-12. chaque fiche importée affiche au minimum son fournisseur, un lien vers
+13. chaque fiche importée affiche au minimum son fournisseur, un lien vers
     l'original lorsqu'il existe et sa date d'observation ; son identifiant
     externe ou sa clé technique dont la stabilité a été vérifiée est conservé
-    par le système ;
-13. chaque fiche affiche un score compris entre 0 et 100 ainsi que le libellé
+    par le système ; pour un prospect Sirene, les provenances et dates des
+    données d'établissement, de la géolocalisation officielle et d'un éventuel
+    géocodage de repli restent distinctes ;
+14. chaque fiche affiche un score compris entre 0 et 100 ainsi que le libellé
     et le sens, positif ou négatif, de chaque règle qui y a contribué ; aucun
     seuil ne cache automatiquement une fiche ;
-14. changer l'adresse, le rayon, la période ou les filtres ne modifie pas le
+15. changer l'adresse, le rayon, la période ou les filtres ne modifie pas le
     score intrinsèque d'une fiche ;
-15. l'utilisateur peut créer une fiche, corriger ses champs et ajouter une
+16. l'utilisateur peut créer une fiche, corriger ses champs et ajouter une
     note ;
-16. une collecte ultérieure ne remplace pas les corrections ou notes de
-    l'utilisateur ;
-17. l'utilisateur peut masquer une fiche, la retrouver dans l'onglet « Fiches
+17. une collecte ultérieure ne remplace pas les corrections ou notes de
+    l'utilisateur, sauf lorsque le critère 26 impose un traitement de
+    conformité ;
+18. l'utilisateur peut masquer une fiche, la retrouver dans l'onglet « Fiches
     masquées » et la démasquer ; une collecte ne la recrée pas et ne la
     démasque pas lorsqu'elle est reconnue ;
-18. les événements passés restent en base sans être accessibles dans
+19. les événements passés restent en base sans être accessibles dans
     l'interface ordinaire ; une mise à jour source ajoutant une occurrence non
     terminée les rend à nouveau visibles, et un événement explicitement masqué
     reste accessible dans l'onglet « Fiches masquées » même après être devenu
     passé ;
-19. un faible score, l'absence dans un filtre ou une observation devenue
+20. un faible score, l'absence dans un filtre ou une observation devenue
     potentiellement obsolète ne provoque ni suppression ni masquage ;
-20. en cas d'échec total ou partiel d'un fournisseur, l'écran de collecte
+21. en cas d'échec total ou partiel d'un fournisseur, l'écran de collecte
     affiche la source concernée, l'état d'échec et la date du dernier succès,
     tandis que les anciennes données restent consultables ;
-21. un contact central ou de portée inconnue n'est jamais présenté comme un
+22. un contact central ou de portée inconnue n'est jamais présenté comme un
     contact confirmé de l'implantation locale ;
-22. en production, les accès utilisent HTTPS, le mot de passe n'est pas stocké
+23. en production, les accès utilisent HTTPS, le mot de passe n'est pas stocké
     en clair et une session ne fonctionne plus après déconnexion ou expiration ;
-23. une fiche événementielle peut conserver plusieurs occurrences non
+24. une fiche événementielle peut conserver plusieurs occurrences non
     consécutives et reste visible tant qu'au moins l'une d'elles n'est pas
     terminée ; un événement publié plusieurs mois ou années à l'avance est
     collecté sans borne future maximale ;
-24. deux événements portant des identifiants externes différents ne sont
+25. deux événements portant des identifiants externes différents ne sont
     jamais fusionnés automatiquement dans le MVP ; l'utilisateur peut masquer
-    le doublon constaté et, facultativement, le relier à la fiche conservée.
+    le doublon constaté et, facultativement, le relier à la fiche conservée ;
+26. un établissement Sirene actif, dont le statut de diffusion et celui de son
+    unité légale sont tous deux en diffusion totale et dont la réutilisation
+    pour la prospection est autorisée, n'est jamais perdu en raison d'une
+    position absente : il reste consultable dans « Localisation à vérifier » ;
+    si l'établissement ou son unité légale passe en diffusion partielle, la
+    fiche devient non prospectable sans être déclarée fermée, sort des listes
+    et scores ordinaires, et aucune donnée restreinte n'est affichée ni utilisée
+    pour la prospection.
 
 ## 14. Critères de succès produit
 
@@ -880,11 +1080,18 @@ brut collecté :
 - proportion d'événements pertinents parmi les mieux classés ;
 - proportion de doublons dans les premiers résultats ;
 - proportion de fiches disposant d'une position exploitable ;
+- pour tout cycle Sirene déclaré réussi, égalité entre le total annoncé par
+  chaque requête logique et le nombre de SIRET uniques reçus pour cette
+  requête, puis égalité entre la somme de ces résultats et le nombre global de
+  SIRET uniques, hors recouvrements attendus et explicitement documentés ;
+- nombre et proportion d'établissements restant dans « Localisation à
+  vérifier » ;
 - provenance renseignée pour toutes les données importées ;
 - absence de recréation ou de démasquage depuis le même objet source après
   masquage ;
-- absence d'écrasement des corrections et notes utilisateur ;
-- fraîcheur obtenue pour chaque famille de sources.
+- absence d'écrasement injustifié des corrections et notes utilisateur ;
+- fraîcheur obtenue pour chaque famille de sources, en distinguant le registre
+  Sirene du jeu de géolocalisation.
 
 Les objectifs chiffrés de pertinence et de déduplication seront fixés après
 qualification manuelle d'un premier échantillon réel dans la zone d'activité.
@@ -898,9 +1105,21 @@ observées.
   à mesurer.
 - Ajouter des sources améliore potentiellement la couverture, mais augmente la
   normalisation, les conflits et les doublons.
-- Les limites de pagination, de volume ou de quota des fournisseurs peuvent
-  rendre une collecte de 50 km incomplète si l'adaptateur ne subdivise pas et
-  ne contrôle pas correctement la zone.
+- Une interruption, un quota ou une mauvaise reprise du curseur de l'API
+  Sirene peut rendre une collecte incomplète ; les totaux et les SIRET uniques
+  doivent donc être contrôlés avant de déclarer son succès.
+- Le registre Sirene et le fichier mensuel de géolocalisation peuvent ne pas
+  représenter exactement la même date. Un établissement récent peut rester
+  temporairement à localiser.
+- Certaines coordonnées sont absentes, approximatives ou erronées. Conserver
+  les cas indéterminés évite les omissions silencieuses mais peut demander une
+  vérification manuelle.
+- La complétude visée est celle des résultats annoncés par les requêtes Sirene
+  du cycle pour les établissements actifs et réutilisables. Elle ne constitue
+  pas un instantané atomique et Sirene ne recense pas nécessairement tous les
+  organismes réels, notamment certaines associations sans SIRET.
+- Les données passées en diffusion partielle ne peuvent plus être utilisées
+  comme auparavant pour la prospection et exigent un traitement conforme.
 - Les données d'effectif et de contact local seront souvent absentes ou
   imprécises.
 - Un géocodage incorrect peut fausser les filtres de distance ; la position
@@ -921,13 +1140,26 @@ Les décisions produit principales sont arrêtées. Les points suivants ne
 changent pas le périmètre du MVP, mais devront être précisés dans les documents
 spécialisés avant leur implémentation :
 
-- fournisseur de géocodage et procédure de correction d'une position erronée,
-  dans `docs/data-sources.md` ;
+- référentiel des communes, calcul de leur intersection avec le cercle,
+  fournisseur de géocodage de repli et procédure de correction d'une position
+  erronée, dans `docs/data-sources.md` ;
 - règles, pondérations et exemples initiaux des deux scores, dans
   `docs/scoring.md` ;
-- protocole et résultat de la validation manuelle des deux sources dans la zone
-  réelle, y compris la récupération des occurrences non terminées sans borne
-  future maximale, dans `docs/data-sources.md` ;
+- protocole et résultat de la validation manuelle des deux connecteurs métier
+  dans la zone réelle, y compris la récupération des occurrences non terminées
+  sans borne future maximale, dans `docs/data-sources.md` ;
+- requête de l'état courant dans l'API Sirene, sélection des établissements
+  actifs pour lesquels l'établissement et l'unité légale sont en diffusion
+  totale, pagination par curseur, lots de communes, contrôle des totaux, reprise
+  après erreur et quotas, dans
+  `docs/data-sources.md` et `docs/architecture.md` ;
+- téléchargement et versionnement du jeu officiel de géolocalisation Sirene,
+  jointure par SIRET, niveaux de qualité, géocodage de repli et traitement des
+  localisations indéterminées, dans `docs/data-sources.md` et
+  `docs/database.md` ;
+- contrôle ciblé des SIRET connus absents de la sélection active et traitement
+  d'un changement de régime de diffusion, dans `docs/data-sources.md` et
+  `docs/database.md` ;
 - mapping des périodes multiples et vérification de la stabilité des
   identifiants événementiels, dans `docs/data-sources.md` et
   `docs/database.md` ;
