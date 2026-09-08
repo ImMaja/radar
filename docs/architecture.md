@@ -2,7 +2,7 @@
 
 > Statut : cadrage technique du MVP
 >
-> Dernière mise à jour : 3 septembre 2026
+> Dernière mise à jour : 8 septembre 2026
 >
 > Périmètre : monolithe modulaire déployé sur un serveur privé
 
@@ -37,7 +37,7 @@ frontières fonctionnelles définies ici de manière implicite.
 - Deux collectes de nature différente : Sirene, mensuelle, et DATAtourisme,
   nocturne.
 - Des traitements Sirene potentiellement longs et un fichier géographique
-  d'environ 772 Mo dans la décision produit actuelle.
+  mensuel d'environ 809 Mo dans le millésime validé d'août 2026.
 - La conservation des corrections, notes, masquages et provenances malgré les
   synchronisations.
 - PostgreSQL non exposé sur Internet.
@@ -604,10 +604,10 @@ Le connecteur Sirene exécute, dans l'ordre :
    `docs/data-sources.md` ;
 5. suivre chaque curseur, enregistrer les compteurs et vérifier les SIRET
    uniques ;
-6. joindre les candidats au millésime validé du fichier officiel de
-   géolocalisation ;
-7. géocoder en repli les adresses publiques dont la position est absente ou
-   insuffisante ;
+6. extraire et contrôler séparément les coordonnées courantes de l'API et du
+   fichier officiel, sans transférer la qualité de l'une à l'autre ;
+7. résoudre la position selon la règle versionnée, puis géocoder en repli les
+   adresses publiques lorsqu'aucun candidat n'est utilisable ;
 8. calculer le classement géographique exact ;
 9. contrôler, après succès de l'énumération, les SIRET connus devenus absents ;
 10. appliquer les changements administratifs ou de diffusion uniquement sur
@@ -621,8 +621,8 @@ en erreur d'existence.
 
 ### 9.2 Traitement du fichier géographique
 
-La décision actuelle reste d'utiliser le fichier mensuel officiel en première
-source de position. Le worker :
+Le fichier mensuel officiel reste dans le MVP comme source indépendante de
+qualité géographique et source de repli. Le worker :
 
 - télécharge la ressource vers un nom temporaire sur un volume privé ;
 - vérifie l'espace libre avant le téléchargement ;
@@ -636,36 +636,61 @@ source de position. Le worker :
 - peut retélécharger ce fichier externe : il n'est pas une sauvegarde des
   données utilisateur.
 
-Le lecteur Parquet exact n'est pas choisi avant l'essai réel. Cette dépendance
-doit être comparée au coût d'utiliser les coordonnées déjà présentes dans
-l'API Sirene 3.11. Une bibliothèque lourde ne sera ajoutée que si le fichier
-reste nécessaire.
+Le lecteur Parquet exact sera choisi au début du jalon 6 par un prototype
+borné. Le fichier validé d'août 2026 contient 37 820 296 lignes pour
+809 215 388 octets ; la lecture doit donc sélectionner par SIRET sans charger
+le fichier entier en mémoire ni le recopier intégralement dans PostgreSQL.
 
-### 9.3 Point de décision API 3.11
+### 9.3 Résolution des positions
 
-Comme documenté dans `docs/data-sources.md`, les coordonnées Lambert publiées
-par l'API 3.11 peuvent rendre le fichier mensuel inutile. Jusqu'au test complet
-autour de Dax et à une modification explicite de la décision produit, le
-pipeline décrit au point précédent reste celui du MVP.
+La validation de Dax a montré que l'API localise 129 689 des 160 165 candidats,
+tandis que le fichier apporte 30 402 positions supplémentaires. Le pipeline
+retient donc :
 
-Si le test valide les coordonnées de l'API, l'architecture recommandée devient
-API Sirene puis Géoplateforme en repli. Le module de géolocalisation accepte
-déjà une observation de position avec sa provenance ; ce changement ne doit
-donc pas affecter les fiches, les recherches PostGIS ou l'interface.
+1. deux observations distinctes pour les coordonnées API et fichier, sans
+   transfert de qualité entre elles ;
+2. un contrôle indépendant de chaque position : nombres finis, France
+   métropolitaine, code commune courant et point dans le contour de cette
+   commune ou à un kilomètre au plus de celui-ci ;
+3. la coordonnée API comme position effective lorsqu'elle passe ces contrôles ;
+4. à défaut, la coordonnée fichier utilisable selon sa propre qualité ;
+5. le géocodeur de la Géoplateforme si aucune position n'est utilisable ou si
+   le seul repli fichier est `TO_VERIFY` ;
+6. la liste « Localisation à vérifier » en dernier recours.
+
+Les qualités `11`, `12`, `21` et `22` sont utilisables avec une précision
+normalisée `ADDRESS` ou `STREET` et un caractère approximatif visible pour
+`12`, `21` et `22`. La qualité `33`, point aléatoire dans la commune, est
+`MUNICIPALITY/TO_VERIFY` et ne décide jamais seule l'inclusion dans le cercle
+exact. Ces codes qualifient uniquement la coordonnée du fichier. Une coordonnée
+API valide est `UNKNOWN/USABLE`, jamais présentée comme une position au numéro
+de rue. Un écart entre les sources supérieur à un kilomètre produit un
+diagnostic visible, sans invalider à lui seul deux points cohérents avec leur
+commune ; un point qui échoue au contrôle communal est écarté. La marge et la
+règle de résolution sont versionnées et ne sont pas des réglages utilisateur.
+
+Les lots Sirene utilisent initialement 30 codes commune au maximum, des pages
+de 1 000 éléments et une concurrence de un. Ces paramètres sont configurables
+pour répondre à une évolution du fournisseur, mais ne constituent pas des
+réglages utilisateur.
 
 ## 10. Pipeline DATAtourisme
 
 Le connecteur DATAtourisme :
 
-1. appelle l'endpoint géographique retenu sans borne future maximale ;
+1. appelle l'endpoint géographique retenu sans aucun filtre temporel
+   fournisseur ;
 2. demande explicitement tous les champs nécessaires ;
 3. suit les informations `next` après canonicalisation sûre sur l'origine
    HTTPS autorisée ;
-4. normalise chaque UUID, identité d'édition, lieu, période, contact et
-   provenance selon le contrat validé ;
+4. normalise chaque UUID, lieu, période, contact et provenance selon le contrat
+   validé, sans assimiler producteur, diffuseur ou propriétaire à
+   l'organisateur ;
 5. rejette après calcul local les objets hors cercle exact ou hors France
    métropolitaine ;
-6. ne crée une nouvelle fiche que si au moins une période n'est pas terminée ;
+6. rejette et comptabilise toute période illisible ou inversée sans inventer
+   de date, puis ne crée une nouvelle fiche que si au moins une période valide
+   n'est pas terminée ;
 7. met à jour les fiches déjà connues, y compris lorsqu'elles deviennent
    passées ;
 8. contrôle le total, les pages et les UUID uniques ;
@@ -673,14 +698,25 @@ Le connecteur DATAtourisme :
    comparable ;
 10. publie la couverture à la fin d'un cycle réussi.
 
+Le couple `(DATAtourisme, UUID)` est l'identité source du MVP. Toutes les
+périodes du même objet, y compris sur plusieurs années, restent sur la même
+fiche. Deux UUID distincts ne sont jamais fusionnés automatiquement. L'URI et
+`identifier` restent des éléments de provenance et de diagnostic.
+
+Dans le contrat observé, aucun champ ne permet de confirmer l'organisateur ou
+un statut d'annulation ou de report ; ces valeurs sont donc `UNKNOWN`. Les
+contacts DATAtourisme peuvent fournir téléphone, site ou relais, mais pas
+d'email depuis le 26 juin 2026. L'absence d'un canal reste une inconnue et non
+une affirmation sur l'événement réel.
+
 Le lien `next` est traité comme une donnée non fiable et jamais exécuté
 verbatim. Une forme relative ou une URL absolue visant exactement l'hôte
 officiel peut fournir son chemin et sa requête ; Radar retire tout paramètre
 `api_key`, reconstruit une URL sur son origine HTTPS configurée et envoie sa
 propre clé uniquement dans l'en-tête. Un hôte, un port ou un chemin inattendu,
-ainsi qu'une redirection vers un autre hôte, est refusé. Les chemins autorisés
-seront confirmés par le test de contrat réel décrit dans
-`docs/data-sources.md`.
+ainsi qu'une redirection vers un autre hôte, est refusé. Le chemin validé est
+`/v1/entertainmentAndEvent` ; tout nouveau chemin est traité comme une rupture
+de contrat à examiner.
 
 Le temps est évalué dans `Europe/Paris`, mais la valeur source et son éventuel
 fuseau restent conservés. Le calcul de l'état « à venir », « en cours » ou
@@ -732,8 +768,11 @@ réutilisation avant de construire une opportunité. Une transition Sirene vers
 la diffusion partielle déclenche un traitement explicite de conformité, qui
 prévaut sur la conservation ordinaire et sur les corrections utilisateur.
 
-Les champs exacts à conserver, retirer ou anonymiser restent un préalable
-juridique signalé dans `docs/data-sources.md`. Tant que cette liste n'est pas
+La solution technique prudente prévue consiste à purger la fiche de
+prospection et à conserver seulement une HMAC du SIRET ou du SIREN dans une
+liste repoussoir dédiée, avec clé hors base. Sa base légale, sa portée et sa
+durée restent un préalable juridique signalé dans `docs/data-sources.md` qui
+doit être fermé avant le début du jalon 6. Tant que cette politique n'est pas
 validée, le connecteur Sirene ne doit pas être mis en production. Aucun
 adaptateur ne peut contourner cette vérification.
 
@@ -742,19 +781,25 @@ adaptateur ne peut contourner cette vérification.
 L'idempotence repose d'abord sur des contraintes fiables :
 
 - `(Sirene, SIRET)` reconnaît l'établissement local ;
-- `(DATAtourisme, identité d'édition validée)` reconnaît l'événement ; cette
-  identité vaut l'UUID seul uniquement si le test fournisseur confirme qu'il
-  n'est pas réutilisé entre éditions distinctes ;
+- `(DATAtourisme, UUID)` reconnaît l'objet événementiel du MVP ;
 - `(fournisseur, identifiant externe stable)` reconnaît toute observation ;
 - la clé du créneau reconnaît une échéance planifiée ;
 - la clé de travail reconnaît une collecte active identique.
 
 Un `upsert` technique ne décide pas à lui seul de la fusion métier. Le service
 d'import applique les règles de `docs/product.md`. Deux UUID événementiels
-différents restent deux fiches ; un même UUID réutilisé entre deux éditions
-distinctes reste également deux fiches selon la règle d'identité spécifique du
-connecteur. Deux SIRET distincts restent deux sites. Les ressemblances de texte
-ou d'adresse ne déclenchent aucune fusion automatique dans le MVP.
+différents restent deux fiches ; les périodes publiées sous un même UUID
+restent sur la même fiche. Une réutilisation future contradictoire est une
+rupture de contrat visible et non le prétexte à inventer silencieusement un
+discriminant fondé sur une date. Deux SIRET distincts restent deux sites. Les
+ressemblances de texte ou d'adresse ne déclenchent aucune fusion automatique
+dans le MVP.
+
+Si un contrôle de contrat détecte une réutilisation contradictoire d'un UUID,
+l'observation est conservée comme anomalie en quarantaine mais ne remplace pas
+la projection courante de la fiche. Le cycle devient `PARTIAL`, l'ancienne
+fiche reste inchangée et aucune seconde fiche n'est créée automatiquement. La
+résolution exige une décision explicite sur le contrat de la source.
 
 Une fiche masquée continue d'être retrouvée par ses identifiants. Son
 observation peut être actualisée, mais l'import ne crée pas une fiche visible
@@ -1086,22 +1131,19 @@ seuls une extraction en microservices.
 Les points suivants ne bloquent pas la rédaction des autres documents, mais
 doivent être résolus avant leur lot d'implémentation :
 
-1. résultat du test Dax comparant les coordonnées de l'API Sirene 3.11 au
-   fichier mensuel, puis maintien ou retrait explicite de ce fichier ;
-2. bibliothèque de lecture du fichier géographique si celui-ci reste dans le
-   MVP ;
-3. règles exactes de conservation lors d'un passage Sirene en diffusion
-   partielle, après validation de conformité ;
-4. règle d'identité d'une édition DATAtourisme si un UUID est réutilisé entre
-   plusieurs éditions commercialement distinctes ;
-5. framework frontend final et mode de service de ses fichiers, en privilégiant
+1. bibliothèque de lecture Parquet du fichier géographique, à choisir par un
+   prototype borné avant le jalon 6 ;
+2. avant le début du jalon 6, règles exactes de purge et de conservation d'une
+   HMAC lors d'un passage Sirene en diffusion partielle, après validation de
+   conformité ;
+3. framework frontend final et mode de service de ses fichiers, en privilégiant
    une solution statique sous la même origine ;
-6. mécanisme d'exploitation choisi sur le serveur réel, `systemd` ou
+4. mécanisme d'exploitation choisi sur le serveur réel, `systemd` ou
    composition de conteneurs simple ;
-7. paramètres Argon2id et durées définitives de session après mesure sur le
+5. paramètres Argon2id et durées définitives de session après mesure sur le
    matériel et validation de l'ergonomie ;
-8. tailles de lot, paramètres du pool SQLAlchemy et limites de ressources après
-   la première collecte réelle.
+6. paramètres du pool SQLAlchemy et limites de ressources après la première
+   collecte implémentée.
 
 Ces décisions doivent être consignées avant le code correspondant. Elles ne
 justifient pas de différer le modèle métier, le scoring ou les tests avec des

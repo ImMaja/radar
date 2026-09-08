@@ -2,7 +2,7 @@
 
 > Statut : règles initiales provisoires à qualifier sur des données réelles
 >
-> Dernière mise à jour : 3 septembre 2026
+> Dernière mise à jour : 8 septembre 2026
 >
 > Versions candidates du MVP : `prospect-v1` et `evenement-v1`
 
@@ -580,7 +580,8 @@ les opportunités évidentes. Elle ne cherche pas à prouver une prédiction de
 revenu.
 
 Le jeu provient d'un cercle de 50 km centré sur l'adresse vérifiée de la mairie
-de Dax, avec les connecteurs validés selon `docs/data-sources.md`.
+de Dax, en reproduisant les contrats d'entrée validés dans
+`docs/data-sources.md`.
 
 ### 11.2 Constitution de l'échantillon
 

@@ -2,7 +2,7 @@
 
 > Statut : cadrage produit validé
 >
-> Dernière mise à jour : 3 septembre 2026
+> Dernière mise à jour : 8 septembre 2026
 >
 > Périmètre initial : un utilisateur, un food truck, France métropolitaine,
 > application web privée
@@ -211,7 +211,10 @@ contenir une ou plusieurs périodes d'occurrence publiées par sa source.
 - Un événement récurrent à des dates non consécutives, tel qu'un marché
   hebdomadaire, reste une seule fiche lorsque la source le décrit comme un seul
   événement ; ses différentes périodes sont conservées.
-- Les éditions 2026 et 2027 d'un même festival sont deux fiches distinctes.
+- Les éditions 2026 et 2027 d'un même festival sont deux fiches distinctes
+  lorsque la source les publie sous deux identités distinctes. Si elle publie
+  un seul objet avec des périodes sur plusieurs années, le MVP conserve ce
+  regroupement au lieu d'inventer un découpage annuel.
 - Le MVP conserve le regroupement fourni par la source. Il n'invente pas
   d'occurrences non publiées et ne regroupe pas automatiquement plusieurs
   fiches distinctes en une série.
@@ -442,9 +445,12 @@ L'utilisateur peut :
   connecteur ; elle ne garantit pas que ses sources représentent tout ce qui
   existe dans le monde réel.
 - La distance affichée et filtrée est calculée à vol d'oiseau.
-- La position d'un établissement Sirene est d'abord recherchée par jointure de
-  son SIRET avec le jeu officiel de géolocalisation, puis, si nécessaire et si
-  son adresse est publique, par un géocodage de repli.
+- La position d'un établissement Sirene utilise d'abord les coordonnées
+  courantes et valides de l'API. Le fichier mensuel officiel conserve sa propre
+  qualité et fournit un repli par SIRET, sans transférer cette qualité au point
+  API ; si aucune position n'est utilisable, l'adresse publique est géocodée.
+  Les critères déterministes de validité et de résolution sont définis dans
+  `docs/data-sources.md`.
 - Un établissement actif, réutilisable pour la prospection et situé dans une
   commune candidate qui reste sans position fiable est conservé dans une liste
   « Localisation à vérifier ». Sa distance est inconnue et il n'apparaît pas
@@ -454,8 +460,10 @@ L'utilisateur peut :
   calcul de distance.
 - Les limites de pagination ou de volume d'un fournisseur sont gérées par son
   adaptateur. Une interruption, un curseur inachevé, une incohérence de
-  comptage ou une étape inachevée rend la collecte partielle ; elle n'est jamais
-  présentée comme ayant couvert tout son périmètre déclaré.
+  comptage ou une étape inachevée empêche le succès : la collecte est partielle
+  si elle a conservé au moins une observation exploitable, sinon elle échoue
+  après épuisement des reprises. Elle n'est jamais présentée comme ayant couvert
+  tout son périmètre déclaré.
 
 ### 9.3 Prospects réguliers
 
@@ -562,13 +570,24 @@ lien de réservation ou relais de contact fourni par la source. Il ne doit pas
 être présenté comme le contact confirmé de l'organisateur si sa portée n'est
 pas connue.
 
+Dans le contrat DATAtourisme validé, les rôles de producteur, diffuseur et
+propriétaire de la donnée ne prouvent pas l'identité de l'organisateur. Aucun
+organisateur ni statut structuré d'annulation ou de report n'est donc déduit
+de ces rôles ou du texte : ces valeurs restent inconnues jusqu'à une source
+explicite ou une correction utilisateur. Depuis le 26 juin 2026,
+DATAtourisme ne diffuse plus les adresses email ; leur absence signifie
+uniquement « email inconnu de cette source ».
+
 Les événements passés restent conservés dans la base, mais ne sont pas
 accessibles dans l'interface ordinaire du MVP. Ils ne font l'objet d'aucune
 purge automatique. Si une mise à jour reçue de la source ajoute ou déplace une
-occurrence non terminée, la fiche redevient automatiquement visible. Les
-événements annulés à venir ne sont pas affichés par défaut, mais peuvent être
-inclus avec le filtre de statut. La disparition d'un événement d'une source ne
-suffit pas à le marquer comme annulé.
+occurrence non terminée, la fiche redevient automatiquement visible sauf si un
+ensemble de périodes corrigé par l'utilisateur reste actif. Dans ce cas, Radar
+signale le changement source sans remplacer la correction ; l'utilisateur peut
+la modifier ou restaurer les périodes source. Les événements annulés à venir ne
+sont pas affichés par défaut, mais peuvent être inclus avec le filtre de statut.
+La disparition d'un événement d'une source ne suffit pas à le marquer comme
+annulé.
 
 Un événement explicitement masqué reste toutefois accessible dans l'onglet
 « Fiches masquées » même après être devenu passé, afin qu'il puisse toujours
@@ -642,24 +661,28 @@ traitent les inconnues de manière neutre et classent globalement les cas
 ### 9.7 Sources, synchronisation et provenance
 
 - Le connecteur de prospects réguliers du MVP utilise l'API Sirene open data
-  de l'Insee pour obtenir les établissements et le jeu officiel mensuel de
-  géolocalisation Sirene pour obtenir leurs coordonnées.
+  de l'Insee pour obtenir les établissements et leurs coordonnées courantes,
+  puis le jeu officiel mensuel de géolocalisation comme complément de qualité
+  et repli par SIRET.
 - L'opportunité importée correspond à l'établissement local identifié par son
   SIRET, et non à la seule unité légale identifiée par son SIREN.
 - Le connecteur événementiel du MVP utilise l'API REST DATAtourisme.
-- Le connecteur Sirene et le connecteur DATAtourisme sont vérifiés dans la zone
-  réelle avant d'être considérés comme validés. Le premier combine deux jeux
-  officiels dont les provenances et dates restent distinctes.
+- Les contrats d'entrée Sirene et DATAtourisme ont été vérifiés le
+  6 septembre 2026 dans la zone réelle définie ci-dessous. Les futurs
+  connecteurs devront reproduire ces contrats dans leurs tests. Le contrat
+  Sirene combine deux jeux officiels dont les provenances et dates restent
+  distinctes.
 - De nouvelles sources sont ajoutées progressivement lorsque leur couverture,
   leur qualité et leur coût de normalisation le justifient.
 - Les prospects réguliers sont actualisés automatiquement une fois par mois et
   peuvent aussi l'être à tout moment avec un bouton « Actualiser maintenant ».
 - Les événements sont actualisés automatiquement chaque nuit, selon le fuseau
   Europe/Paris, et peuvent également l'être manuellement.
-- Chaque collecte événementielle cherche tous les événements publiés dans la
-  zone qui possèdent au moins une occurrence non terminée, sans imposer de date
-  maximale dans le futur. L'horizon réellement disponible dépend uniquement
-  de ce que la source a déjà publié.
+- Chaque collecte DATAtourisme interroge les événements publiés dans la zone
+  sans filtre temporel fournisseur. Radar conserve après normalisation les
+  objets qui possèdent au moins une occurrence valide non terminée, sans date
+  maximale dans le futur. Ce filtrage local évite d'omettre un événement déjà
+  commencé mais encore en cours ; l'horizon disponible dépend de la source.
 - Le déclenchement manuel est disponible notamment après un changement
   d'adresse ou de rayon, sans attendre la prochaine exécution planifiée.
 - Deux collectes identiques ne s'exécutent jamais simultanément.
@@ -699,9 +722,10 @@ Pour chaque cycle Sirene, Radar :
    est autorisée, sans appliquer de filtre commercial d'activité ;
 3. suit la pagination par curseur jusqu'au dernier résultat et contrôle les
    totaux annoncés pour chaque requête, les pages reçues et les SIRET uniques ;
-4. joint les établissements au fichier officiel de géolocalisation par SIRET,
-   puis tente un géocodage de l'adresse publique lorsque la position reste
-   absente ou insuffisamment fiable ;
+4. valide séparément les coordonnées courantes de l'API et celles du fichier
+   officiel joint sur le SIRET, retient l'API en priorité sans lui transférer la
+   qualité du fichier, puis tente un géocodage lorsque aucune position n'est
+   utilisable ;
 5. calcule la distance exacte à vol d'oiseau et classe chaque établissement
    candidat dans le rayon, hors du rayon ou dans « Localisation à vérifier » ;
 6. contrôle séparément l'état courant des SIRET déjà connus qui ont disparu de
@@ -717,19 +741,26 @@ prospection ne sont plus affichées ni utilisées. Radar conserve uniquement les
 reconnaître la restriction et éviter une réimportation incorrecte. Les
 corrections et notes utilisateur ne servent jamais à contourner cette
 restriction ; elles ne sont conservées que si leur conservation possède un
-fondement indépendant et licite. Les champs précis à retirer, anonymiser ou
-conserver sont documentés et validés avant l'implémentation du connecteur.
+fondement indépendant et licite. La solution technique prudente consiste à
+purger les données de prospection et à ne conserver dans une liste repoussoir
+dédiée qu'une HMAC du SIRET ou du SIREN, calculée avec une clé hors base. Sa
+base légale, sa portée et sa durée doivent être validées avant le début du
+jalon 6 ; aucun connecteur Sirene ne peut être mis en production sans cette
+décision.
 
-La validation manuelle initiale des connecteurs utilise un cercle réel de
-50 km centré sur l'adresse géocodée et vérifiée de la mairie de Dax, ainsi qu'un
-ensemble varié de prospects et d'événements. Pour Sirene, elle vérifie
+La validation manuelle initiale des contrats a utilisé un cercle réel de 50 km
+centré sur l'adresse géocodée de la mairie de Dax, ainsi qu'un ensemble varié
+d'établissements et d'objets événementiels. Pour Sirene, elle a vérifié
 notamment l'état courant, le régime de diffusion, la pagination complète, la
 concordance des totaux, la jointure par SIRET, la qualité des coordonnées et
-les localisations restant à vérifier. Pour DATAtourisme, elle vérifie notamment
-les identifiants, la localisation, les dates, les occurrences et la pagination.
-La provenance et les erreurs évidentes sont vérifiées dans les deux cas.
+les localisations restant à vérifier. Pour DATAtourisme, elle a vérifié les
+identifiants, la localisation, les dates, les occurrences et la pagination.
+La provenance et les erreurs évidentes ont été contrôlées dans les deux cas.
 L'absence de contacts, d'effectifs ou d'organisateur ne rend ni une fiche ni
 une source invalide.
+
+Les mesures, anomalies et décisions issues de cette validation sont consignées
+dans `docs/source-validation-dax-2026-09.md`.
 
 L'ordre d'intégration envisagé après les deux connecteurs métier du MVP est :
 
@@ -773,13 +804,17 @@ MVP.
   peut mettre à jour ses observations sources, mais ne peut ni la recréer sous
   la forme d'une nouvelle fiche lorsqu'elle est reconnue, ni la démasquer.
 - Démasquer une fiche la rend à nouveau visible avec les corrections, la note,
-  les provenances et les observations dont la conservation reste autorisée.
+  les provenances et les observations dont la conservation reste autorisée. Si
+  elle était liée à une fiche conservée comme doublon, ce lien est retiré dans
+  la même opération.
 - Aucune suppression définitive de fiche à l'initiative de l'utilisateur n'est
   proposée dans le MVP. Cette règle n'empêche pas un retrait ou une
   anonymisation imposé par une obligation légale ou de diffusion.
 
-Le masquage d'une édition d'événement ne s'applique pas automatiquement aux
-éditions futures du même événement.
+Le masquage d'une fiche événementielle ne s'applique pas automatiquement à une
+future fiche publiée sous une identité distincte. En revanche, si la source
+ajoute de nouvelles périodes au même UUID, il s'agit toujours de la fiche
+masquée et la collecte ne la démasque pas.
 
 ### 9.9 Déduplication
 
@@ -797,7 +832,8 @@ Le rapprochement suit les principes suivants :
    des doublons ;
 5. pour un événement, seul le même couple fournisseur-identifiant externe
    stable permet de reconnaître automatiquement la même fiche ; pour la source
-   initiale, ce couple est formé de DATAtourisme et de son UUID ;
+   initiale, ce couple est formé de DATAtourisme et de son UUID, auquel toutes
+   les périodes publiées restent rattachées ;
 6. pour les événements, deux identifiants externes différents restent deux
    fiches distinctes, même lorsque leur titre, leurs dates, leur lieu ou leur
    organisateur se ressemblent fortement ;
@@ -810,9 +846,15 @@ Le rapprochement suit les principes suivants :
    fiche visible.
 
 La stabilité et l'unicité d'un identifiant externe sont vérifiées lors de la
-validation de chaque source. Si une source réutilise un identifiant entre des
-éditions commercialement distinctes, son adaptateur doit appliquer une règle
-d'identité spécifique documentée.
+validation de chaque source. Une réutilisation future qui contredit clairement
+le contrat observé est signalée comme une rupture de contrat ; elle ne provoque
+ni fusion avec un autre identifiant ni invention silencieuse d'une clé fondée
+sur une date mutable.
+
+L'observation contradictoire est alors mise en quarantaine et ne modifie pas la
+fiche courante. Le cycle est partiel, aucune seconde fiche n'est créée
+automatiquement et une décision explicite sur le contrat de la source est
+requise avant reprise.
 
 La déduplication parfaite n'est pas un critère réaliste. Le MVP ne cherche pas
 automatiquement les doublons probables : sa priorité est d'éviter la création
@@ -841,8 +883,9 @@ Il comprend :
 - le lancement manuel des collectes ;
 - l'actualisation automatique mensuelle des prospects réguliers et nocturne
   quotidienne des événements ;
-- l'API Sirene open data de l'Insee et le jeu officiel de géolocalisation
-  Sirene comme premières sources des prospects réguliers ;
+- l'API Sirene open data de l'Insee pour les établissements et leurs
+  coordonnées courantes, avec le jeu officiel mensuel de géolocalisation comme
+  complément de qualité et repli ;
 - l'API REST DATAtourisme comme première source d'événements ;
 - la pagination complète de Sirene, le contrôle des totaux par requête et la
   comptabilisation de chaque SIRET candidat ;
@@ -850,8 +893,9 @@ Il comprend :
 - la déduplication automatique limitée aux identifiants fiables ;
 - les listes et fiches détaillées des prospects réguliers et événements ;
 - les filtres, la recherche textuelle et les tris essentiels ;
-- la conservation d'une ou plusieurs périodes par fiche d'événement et la
-  collecte sans borne future maximale des occurrences non terminées publiées ;
+- la conservation d'une ou plusieurs périodes par fiche d'événement, la
+  collecte DATAtourisme sans filtre temporel fournisseur, puis la sélection
+  locale des occurrences non terminées sans borne future maximale ;
 - l'import et le scoring des fiches même lorsqu'aucun moyen de contact n'est
   connu ;
 - l'exclusion des établissements déjà fermés ou rattachés à une unité légale
@@ -995,12 +1039,12 @@ Le MVP est acceptable lorsque :
    Landes ;
 5. les prospects réguliers sont actualisés automatiquement une fois par mois
    et les événements chaque nuit selon le fuseau Europe/Paris ;
-6. le connecteur de prospects Sirene et le connecteur événementiel
-   DATAtourisme ont été vérifiés manuellement dans un cercle de 50 km centré sur
-   l'adresse géocodée et vérifiée de la mairie de Dax ;
-   chaque connecteur parcourt toute sa pagination, crée des fiches normalisées
-   accompagnées de leur provenance et signale comme partiel tout cycle qui ne
-   peut pas terminer les étapes prévues ;
+6. les contrats d'entrée Sirene et DATAtourisme ont été vérifiés manuellement
+   dans un cercle de 50 km centré sur l'adresse géocodée et vérifiée de la
+   mairie de Dax ; chaque connecteur implémenté reproduit son contrat, parcourt
+   toute sa pagination, crée des fiches normalisées accompagnées de leur
+   provenance et classe un cycle inachevé `PARTIAL` s'il conserve au moins une
+   observation exploitable, sinon `FAILED` après épuisement des reprises ;
 7. une seconde collecte reconnaît le même couple fournisseur-identifiant
    externe stable et met à jour la fiche au lieu de la recréer ; deux collectes
    identiques ne s'exécutent pas simultanément ;
@@ -1052,9 +1096,10 @@ Le MVP est acceptable lorsque :
     démasque pas lorsqu'elle est reconnue ;
 19. les événements passés restent en base sans être accessibles dans
     l'interface ordinaire ; une mise à jour source ajoutant une occurrence non
-    terminée les rend à nouveau visibles, et un événement explicitement masqué
-    reste accessible dans l'onglet « Fiches masquées » même après être devenu
-    passé ;
+    terminée les rend à nouveau visibles en l'absence de correction utilisateur
+    des périodes ; sinon, le changement est signalé sans écraser la correction.
+    Un événement explicitement masqué reste accessible dans l'onglet « Fiches
+    masquées » même après être devenu passé ;
 20. un faible score, l'absence dans un filtre ou une observation devenue
     potentiellement obsolète ne provoque ni suppression ni masquage ;
 21. en cas d'échec total ou partiel d'un fournisseur, l'écran de collecte
@@ -1066,8 +1111,10 @@ Le MVP est acceptable lorsque :
     en clair et une session ne fonctionne plus après déconnexion ou expiration ;
 24. une fiche événementielle peut conserver plusieurs occurrences non
     consécutives et reste visible tant qu'au moins l'une d'elles n'est pas
-    terminée ; un événement publié plusieurs mois ou années à l'avance est
-    collecté sans borne future maximale ;
+    terminée ; DATAtourisme est interrogé sans filtre temporel fournisseur et
+    un événement publié plusieurs mois ou années à l'avance est collecté sans
+    borne future maximale ; toutes les périodes d'un même UUID restent sur la
+    même fiche ;
 25. deux événements portant des identifiants externes différents ne sont
     jamais fusionnés automatiquement dans le MVP ; l'utilisateur peut masquer
     le doublon constaté et, facultativement, le relier à la fiche conservée ;
@@ -1110,8 +1157,9 @@ observées.
 
 ## 15. Risques et hypothèses
 
-- La couverture et la qualité réelles des sources dans la zone choisie restent
-  à mesurer.
+- La couverture et la qualité des deux premières sources ont été mesurées à
+  Dax le 6 septembre 2026, mais elles peuvent évoluer et ne préjugent pas de la
+  couverture d'autres zones ou de futures sources.
 - Ajouter des sources améliore potentiellement la couverture, mais augmente la
   normalisation, les conflits et les doublons.
 - Une interruption, un quota ou une mauvaise reprise du curseur de l'API
@@ -1146,22 +1194,16 @@ observées.
 ## 16. Décisions et validations restant ouvertes
 
 Les documents spécialisés définissent désormais l'architecture, le modèle de
-données, les sources, le scoring et l'ordre de réalisation. Les décisions
-produit principales sont arrêtées. Les points suivants ne changent pas le
-périmètre du MVP, mais doivent être clos avant l'implémentation ou la mise en
-production concernée :
+données, les sources, le scoring et l'ordre de réalisation. Les contrats
+Sirene et DATAtourisme, la stratégie de géolocalisation et l'identité source
+des événements sont arrêtés pour le MVP dans
+`docs/source-validation-dax-2026-09.md`. Les points suivants ne changent pas
+le périmètre du MVP, mais doivent être clos avant l'implémentation ou la mise
+en production concernée :
 
-- tester avec une clé réelle la requête d'état courant, les curseurs, les lots
-  et les contrôles de totaux de l'API Sirene ;
-- comparer autour de Dax les coordonnées de l'API Sirene 3.11, le fichier
-  mensuel officiel et le géocodage de repli, puis décider si le fichier reste
-  dans le MVP et fixer les niveaux de qualité acceptables ;
-- valider sur des réponses DATAtourisme réelles les champs, les périodes, les
-  contacts, les statuts et les formes de pagination `next` ;
-- vérifier si un UUID DATAtourisme reste propre à une édition ou s'il faut une
-  identité d'édition spécifique pour les événements récurrents ;
-- valider les données qui peuvent licitement être conservées, retirées ou
-  transformées lorsqu'un établissement Sirene passe en diffusion partielle ;
+- faire valider avant le début du jalon 6 la portée, la purge, la base légale
+  et la durée éventuelle de la liste repoussoir HMAC appliquée lorsqu'un
+  établissement ou son unité légale passe en diffusion partielle ;
 - qualifier manuellement l'échantillon de Dax et ajuster les pondérations et
   mappings initiaux des scores ;
 - arrêter le frontend avant le jalon qui introduit l'interface de connexion ;

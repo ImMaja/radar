@@ -1,8 +1,8 @@
 # Radar — Roadmap
 
-> Statut : proposition de séquencement du MVP
+> Statut : jalons 0 et 1 terminés ; prochaine étape, jalon 2
 >
-> Dernière mise à jour : 3 septembre 2026
+> Dernière mise à jour : 8 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -35,16 +35,17 @@ ce document n'élargit pas implicitement le MVP.
 
 ## 3. Conditions préalables
 
-La conception peut avancer sans secret. Les validations réelles des
-connecteurs nécessitent toutefois :
+Les prérequis de la validation réelle du jalon 1 ont été réunis localement :
 
 - une clé publique pour l'API Sirene 3.11 ;
 - une clé pour l'API DATAtourisme v1 ;
 - un accès au millésime courant des contours administratifs ;
-- tant qu'il reste dans le MVP, un accès au fichier mensuel de géolocalisation
-  Sirene.
+- un accès au fichier mensuel de géolocalisation Sirene conservé par la
+  stratégie hybride.
 
-Les clés sont configurées localement et ne sont jamais ajoutées au dépôt.
+Les clés sont configurées localement et ne sont jamais ajoutées au dépôt. Elles
+resteront également nécessaires dans les environnements qui exécutent les
+connecteurs, sous une forme secrète adaptée.
 
 Avant le jalon 3 et sa première interface utilisateur, il faudra également
 choisir le frontend. La recommandation initiale est une application
@@ -56,6 +57,8 @@ qu'après un prototype minimal.
 ## 4. Jalons du MVP
 
 ### Jalon 0 — Cadrage documentaire
+
+**État : terminé.**
 
 **But :** disposer de décisions cohérentes avant de créer l'application.
 
@@ -75,12 +78,15 @@ cours de route.
 
 ### Jalon 1 — Validation des contrats externes
 
+**État : terminé le 6 septembre 2026.**
+
 **But :** éliminer les principales incertitudes avant de bâtir les imports.
 
 Travaux :
 
 - géocoder et vérifier la mairie de Dax ;
-- sélectionner les communes qui intersectent le cercle de 50 km ;
+- sélectionner les communes qui intersectent le cercle de 50 km et sa marge
+  de présélection ;
 - tester la requête Sirene garantissant l'état courant ;
 - vérifier les statuts administratifs et de diffusion ;
 - parcourir un curseur Sirene jusqu'à son terme et contrôler les totaux ;
@@ -88,15 +94,25 @@ Travaux :
 - décider si ce fichier reste nécessaire au MVP ;
 - tester l'endpoint événementiel DATAtourisme, ses champs, ses occurrences et
   sa pagination `next` ;
-- répéter une collecte afin de vérifier la stabilité des identifiants ;
-- comparer plusieurs éditions d'événements récurrents afin de déterminer si un
-  UUID DATAtourisme peut être utilisé seul comme identité d'édition.
+- répéter une collecte afin de vérifier la stabilité à court terme des
+  identifiants ;
+- examiner les événements récurrents et multiannuels afin de fixer l'identité
+  source du MVP sans inventer un discriminant fragile.
 
-Livrable : un compte rendu daté selon le protocole de
-`docs/data-sources.md`, sans secret ni donnée personnelle inutile.
+Livrable : `docs/source-validation-dax-2026-09.md`, compte rendu daté selon le
+protocole de `docs/data-sources.md`, sans secret ni donnée personnelle inutile.
 
 Critère de sortie : les deux contrats d'entrée peuvent être reproduits, leurs
 limites sont connues et la stratégie de géolocalisation Sirene est arrêtée.
+
+Résultat : critère atteint. La validation a confirmé le curseur Sirene au-delà
+de 10 000 résultats et des lots de 30 codes au maximum, maintenu le fichier
+mensuel comme repli de l'API pour 30 402 positions, parcouru les 12 pages
+DATAtourisme, retenu `(DATAtourisme, UUID)` comme identité source du MVP et
+confirmé qu'une recherche ciblée retrouve un objet en diffusion partielle sans
+le confondre avec une fermeture. La conformité exacte d'une future liste
+repoussoir Sirene reste un préalable au jalon 6, mais ne bloque pas le socle du
+jalon 2.
 
 ### Jalon 2 — Socle applicatif minimal
 
@@ -176,12 +192,15 @@ relancée sans être présentée à tort comme une couverture complète.
 Travaux :
 
 - charger le référentiel de communes retenu ;
-- énumérer et lotir les communes candidates ;
-- intégrer l'adaptateur Sirene avec quota et curseur ;
+- énumérer les communes candidates avec la marge de 1 km et les répartir en
+  lots disjoints de 30 codes au maximum ;
+- intégrer l'adaptateur Sirene avec quota, pages de 1 000 et curseur ;
 - contrôler l'état courant, la diffusion et les totaux ;
 - appliquer le traitement conforme lorsqu'un établissement ou son unité
   légale passe en diffusion partielle ;
-- géolocaliser les établissements selon la décision du jalon 1 ;
+- conserver séparément les coordonnées API et fichier, appliquer la règle
+  communale versionnée, retenir l'API en priorité sans transfert de qualité,
+  puis le fichier en repli et la Géoplateforme ;
 - calculer leur distance exacte ;
 - importer les observations avec provenance ;
 - conserver les positions indéterminées dans « Localisation à vérifier » ;
@@ -207,14 +226,19 @@ de Dax et une relance met à jour les mêmes SIRET sans créer de doublons.
 Travaux :
 
 - intégrer l'adaptateur DATAtourisme avec clé en en-tête ;
-- collecter les événements du cercle sans horizon futur maximal ;
+- collecter les événements du cercle sans filtre temporel fournisseur, puis
+  retenir localement les périodes valides non terminées sans horizon maximal ;
 - suivre chaque lien de pagination validé jusqu'à la fin ;
 - normaliser lieu, catégories, description, contacts et provenance ;
 - conserver plusieurs périodes sur une fiche ;
 - calculer les états à venir, en cours et passé ;
-- reconnaître la même identité d'édition lors d'une relance, selon la décision
-  du jalon 1 ;
-- ne pas confondre producteur de donnée et organisateur ;
+- reconnaître `(DATAtourisme, UUID)` lors d'une relance et conserver toutes
+  les périodes de cet objet sur la même fiche ;
+- mettre en quarantaine, sans modifier la fiche, une future réutilisation d'UUID
+  qui contredit le contrat observé ;
+- ne pas confondre producteur, diffuseur ou propriétaire de donnée avec
+  l'organisateur, et conserver un organisateur ou statut inconnu sans
+  l'inférer du texte ;
 - conserver les événements passés hors de l'interface ordinaire.
 
 Interface minimale :
@@ -332,7 +356,6 @@ Ces choix ne bloquent pas le cadrage actuel :
 
 | Décision | Échéance maximale | Recommandation actuelle |
 | --- | --- | --- |
-| Coordonnées API Sirene ou fichier mensuel | Fin du jalon 1 | Préférer l'API si sa couverture réelle est suffisante |
 | Frontend du MVP | Avant le jalon 3 | TypeScript, React et outil de build simple ; Next.js seulement si un besoin apparaît |
 | Processus de tâches longues | Début du jalon 5 | Même code applicatif, file durable en PostgreSQL, sans broker |
 | Serveur et mode de déploiement | Avant le jalon 11 | Un seul serveur privé, composants non publics sauf le proxy HTTPS |
@@ -341,6 +364,12 @@ Ces choix ne bloquent pas le cadrage actuel :
 Une décision prise met à jour les documents spécialisés avant son
 implémentation. Une option reportée ne doit pas conduire à développer les deux
 solutions « au cas où ».
+
+Le jalon 1 a clos la stratégie de position Sirene : coordonnées API valides en
+priorité, fichier mensuel conservé avec sa qualité propre et comme repli, puis
+Géoplateforme. Aucune qualité n'est transférée entre les deux positions. Le
+choix de la bibliothèque Parquet est une décision d'implémentation du jalon 6,
+pas une remise en cause de ce contrat.
 
 ## 7. Après le MVP
 

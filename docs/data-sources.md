@@ -1,8 +1,8 @@
 # Radar — Sources de données externes
 
-> Statut : cadrage technique initial, validation réelle à terminer
+> Statut : contrats du MVP validés autour de Dax
 >
-> Dernière mise à jour : 3 septembre 2026
+> Dernière mise à jour : 8 septembre 2026
 >
 > Périmètre : France métropolitaine, MVP Sirene et DATAtourisme
 
@@ -103,17 +103,21 @@ jamais inactives les données du dernier cycle réussi.
 
 ## 3. Sources du MVP
 
-| Besoin | Source retenue | Fréquence | Accès | État au 3 septembre 2026 |
+| Besoin | Source retenue | Fréquence | Accès | État au 6 septembre 2026 |
 | --- | --- | --- | --- | --- |
-| Géocoder l'adresse de référence | API de géocodage de la Géoplateforme | À la demande | Sans clé, 50 requêtes/s/IP | Documentation vérifiée ; adresse de Dax testée |
-| Trouver les communes candidates | Jeu « Contours administratifs » de data.gouv.fr | À chaque nouveau millésime utile | Téléchargement ouvert | Documentation vérifiée ; intégration non testée |
-| Découvrir et actualiser les établissements | API Sirene 3.11 de l'Insee | Mensuelle et manuelle | Compte et clé publique, 30 requêtes/min | Documentation vérifiée ; appels métier bloqués sans clé |
-| Géolocaliser les établissements Sirene | Fichier mensuel officiel de géolocalisation Sirene | Mensuelle | Téléchargement ouvert | Source produit actuelle ; échantillon réel non testé |
-| Découvrir et actualiser les événements | API DATAtourisme v1 | Chaque nuit et manuelle | Clé gratuite, 1 000 requêtes/h | Documentation vérifiée ; appels métier bloqués sans clé |
+| Géocoder l'adresse de référence | API de géocodage de la Géoplateforme | À la demande | Sans clé, 50 requêtes/s/IP | Appel unitaire validé ; repli des établissements à tester dans l'adaptateur |
+| Trouver les communes candidates | Jeu « Contours administratifs » de data.gouv.fr | À chaque nouveau millésime utile | Téléchargement ouvert | Millésime 2026 testé et validé |
+| Découvrir et actualiser les établissements | API Sirene 3.11 de l'Insee | Mensuelle et manuelle | Compte et clé publique, 30 requêtes/min | Contrat, lots et curseur validés |
+| Géolocaliser les établissements Sirene | Coordonnées API puis fichier mensuel officiel de géolocalisation Sirene | Mensuelle | API et téléchargement ouvert | Stratégie hybride validée |
+| Découvrir et actualiser les événements | API DATAtourisme v1 | Chaque nuit et manuelle | Clé gratuite, 1 000 requêtes/h | Contrat, champs et pagination validés |
 
 Les limites ci-dessus sont celles publiées à la date du document. Les
 adaptateurs doivent traiter les réponses de limitation et ne pas supposer que
 ces valeurs resteront inchangées.
+
+Les mesures et anomalies de cette validation sont consignées dans
+`docs/source-validation-dax-2026-09.md`. Elles décrivent un essai daté, pas un
+volume garanti par les fournisseurs.
 
 ## 4. Référentiels géographiques
 
@@ -145,7 +149,7 @@ présentation à l'utilisateur. L'utilisateur vérifie la position avant la
 première collecte. Une correction ultérieure crée un nouveau résultat de
 géocodage sans réécrire la provenance de l'ancien.
 
-Le contrôle préliminaire du 3 septembre 2026 pour
+Le contrôle finalisé le 6 septembre 2026 pour
 `12 rue Saint-Pierre, 40100 Dax` a renvoyé comme premier résultat
 `12 Rue Saint Pierre 40100 Dax`, code commune `40088`, identifiant BAN
 `40088_1750_00012`, aux coordonnées WGS84 longitude `-1.051952`, latitude
@@ -186,6 +190,13 @@ sur-sélection plutôt qu'un oubli en bordure. Elle ne modifie pas le rayon
 métier : les coordonnées de chaque établissement sont ensuite comparées au
 cercle exact. Interroger quelques établissements hors rayon est acceptable ;
 omettre une commune intersectée ne l'est pas.
+
+Avec le millésime 2026 et le point de Dax retenu, le cercle exact de 50 km
+intersecte 405 communes. La présélection élargie de 1 km en retient 418, dont
+228 dans les Landes et 190 dans les Pyrénées-Atlantiques. Le connecteur
+interroge ces 418 communes, puis filtre les coordonnées des établissements sur
+le cercle métier exact. Ces nombres sont des résultats de validation et seront
+recalculés pour tout autre centre ou millésime.
 
 Le référentiel est remplacé lorsqu'un nouveau millésime modifie le Code
 officiel géographique ou les contours utiles. Une collecte conserve la version
@@ -249,15 +260,32 @@ l'état courant et respecter simultanément les conditions suivantes :
 Aucun code d'activité, type d'organisme, effectif ou score n'est utilisé pour
 réduire cette découverte. Ces critères sont appliqués seulement dans Radar.
 
-Les variables d'état sont historisées dans Sirene. Une condition qui signifie
-seulement « a été actif à un moment » pourrait donc ramener un établissement
-désormais fermé. L'expression exacte de la requête courante doit être figée par
-un test de contrat avec une clé réelle. Indépendamment du filtre serveur,
-l'adaptateur vérifie la période courante de chaque réponse avant de créer une
-fiche. Une période historique active ne suffit jamais.
+Les variables d'état sont historisées dans Sirene. Le contrat testé le
+6 septembre 2026 utilise le paramètre logique suivant, avec un paramètre
+`date` capturé au début du cycle :
 
-Tant que ce test n'est pas réalisé, aucun exemple d'URL complète n'est déclaré
-comme contrat définitif dans ce document.
+```text
+(
+  codeCommuneEtablissement:<code-1>
+  OR codeCommuneEtablissement:<code-2>
+  OR ...
+)
+AND periode(etatAdministratifEtablissement:A)
+AND etatAdministratifUniteLegale:A
+AND statutDiffusionEtablissement:O
+AND statutDiffusionUniteLegale:O
+```
+
+Sur l'endpoint SIRET testé, l'état historique de l'établissement exige
+`periode(...)`, tandis que `etatAdministratifUniteLegale:A` doit rester hors
+de cette fonction. Le cycle utilise également `nombre=1000` et un curseur
+initial `*`.
+
+Indépendamment du filtre serveur, l'adaptateur vérifie la période courante et
+les statuts de chaque réponse avant de créer une fiche. Trois objets de la
+validation n'étaient déjà plus actifs lors de ce contrôle postérieur. Ils sont
+comptés comme reçus pour réconcilier la pagination, mais rejetés de l'import
+métier. Une période historique active ne suffit jamais.
 
 ### 5.4 Lots, curseurs et complétude
 
@@ -278,16 +306,26 @@ Le déroulement logique est le suivant :
 7. vérifier le total, puis réunir les lots en dédupliquant par SIRET.
 
 Un lot n'est terminé que lorsque son curseur l'est et que ses comptages sont
-cohérents. Une différence inexpliquée, même faible, rend le cycle partiel.
+cohérents. Après épuisement des reprises, une différence inexpliquée, même
+faible, rend le cycle `PARTIAL` si des observations exploitables ont été
+conservées, sinon `FAILED`.
 Comme l'API est interrogée en direct, un cycle couvrant plusieurs requêtes
 n'est pas un instantané atomique. La date de chaque requête est donc conservée
 et une incohérence possiblement due à une mise à jour concurrente donne lieu à
 une nouvelle tentative complète du lot avant de conclure à un échec.
 
 L'Insee limite à 1 000 le nombre d'opérateurs `AND` ou `OR` dans un même groupe
-de parenthèses. Le nombre exact de communes par lot sera choisi par un test de
-contrat, avec une marge suffisante pour la longueur d'URL ; il ne constitue
-pas un réglage produit.
+de parenthèses. En pratique, un essai avec 80 codes commune a reçu une réponse
+HTTP `414`. Le MVP fixe donc un plafond opérationnel conservateur de 30 codes
+par lot ; ce n'est pas une limite contractuelle annoncée par l'Insee.
+
+Le test complet sur les 405 communes du cercle exact a utilisé 14 lots et 182
+requêtes espacées de 2,55 secondes. Il a réconcilié 160 165 résultats annoncés,
+160 165 lignes reçues et 160 165 SIRET uniques, sans doublon inter-lots. Le lot
+le plus grand a fourni 31 122 résultats sur 32 pages non vides, suivies d'une
+réponse terminale vide. Cela valide le passage au-delà des 10 000 résultats par
+curseur. Ces lignes restent des candidats bruts issus de communes
+sur-sélectionnées, pas autant de prospects dans le cercle.
 
 ### 5.5 Champs utiles
 
@@ -304,8 +342,8 @@ L'adaptateur ne demande et ne conserve que les champs nécessaires au produit :
 - statuts de diffusion de l'établissement et de l'unité légale ;
 - dates de création, de début de période et de dernier traitement utiles à la
   fraîcheur ;
-- identifiant d'adresse et coordonnées publiées par l'API, à des fins de
-  comparaison pendant la validation géographique.
+- identifiant d'adresse et coordonnées publiées par l'API, pour la
+  géolocalisation opérationnelle et le contrôle croisé des sources.
 
 Les dates de naissance, le sexe, les données financières et les informations
 sur les dirigeants n'ont aucune utilité pour Radar et ne sont pas collectés.
@@ -320,16 +358,19 @@ qu'un même code conserve sa signification entre la NAF 2008 et la NAF 2025.
 
 ### 5.6 Géolocalisation officielle
 
-Conformément à la décision actuelle de `docs/product.md`, la position de
-référence d'un établissement provient d'abord du jeu mensuel
+La validation a arrêté une stratégie hybride. La position courante publiée
+par l'API Sirene est utilisée en priorité lorsqu'elle satisfait les contrôles
+déterministes ci-dessous. Le jeu mensuel
 [« Géolocalisation des établissements du répertoire SIRENE pour les études
-statistiques »](https://www.data.gouv.fr/datasets/geolocalisation-des-etablissements-du-repertoire-sirene-pour-les-etudes-statistiques).
+statistiques »](https://www.data.gouv.fr/datasets/geolocalisation-des-etablissements-du-repertoire-sirene-pour-les-etudes-statistiques)
+reste nécessaire comme source indépendante de qualité géographique et comme
+repli lorsque la coordonnée API n'est pas utilisable.
 
-Ce jeu contient notamment le SIRET, des coordonnées X/Y, le code commune et
-des variables de qualité. En métropole, les coordonnées utilisent le système
-RGF93 / Lambert-93. Le fichier publié en août 2026 représente environ 772 Mo au
-format Parquet ; son volume doit donc être pris en compte sans être confondu
-avec le volume final conservé par Radar.
+Ce jeu contient notamment le SIRET, des coordonnées X/Y Lambert-93, des
+coordonnées longitude/latitude WGS84, le code commune et des variables de
+qualité. Le fichier d'août 2026 pèse `809 215 388` octets au format Parquet et
+contient `37 820 296` lignes ; son volume doit être pris en compte sans être
+confondu avec le volume final conservé par Radar.
 
 Le traitement doit :
 
@@ -337,9 +378,10 @@ Le traitement doit :
 2. télécharger dans un fichier temporaire ;
 3. contrôler le format, la taille, l'empreinte et les colonnes obligatoires ;
 4. conserver le millésime et la date de publication ;
-5. joindre les candidats Sirene au fichier par SIRET ;
-6. transformer les coordonnées Lambert-93 en WGS84 ou dans le type géographique
-   retenu par PostGIS ;
+5. joindre les candidats Sirene au fichier par SIRET sans charger toutes ses
+   lignes dans PostgreSQL ;
+6. contrôler les coordonnées WGS84 fournies et, si nécessaire, transformer les
+   coordonnées Lambert-93 pour vérification ;
 7. conserver séparément la provenance et la qualité de cette position ;
 8. ne publier le nouveau millésime comme utilisable qu'après réussite de tous
    les contrôles.
@@ -348,39 +390,77 @@ Le fichier et l'API Sirene peuvent représenter des dates différentes. Un
 établissement récent absent du fichier n'est donc pas considéré comme
 inexistant.
 
-Les codes de qualité acceptés sans vérification et ceux qui déclenchent le
-géocodage de repli seront définis après lecture du fichier réel et comparaison
-sur l'échantillon de Dax. Avant cette validation, Radar ne doit pas inventer un
-seuil arbitraire.
+Les codes de qualité du fichier sont normalisés ainsi :
 
-Si la jointure échoue ou si la qualité est insuffisante, l'adresse publique de
-l'établissement est envoyée au géocodeur de la Géoplateforme. La requête, le
-résultat, le score, la date et le fournisseur restent distincts du fichier
-Sirene. Si aucune position n'est assez fiable, la fiche va dans
+| Code | Interprétation source | Précision Radar | Utilisabilité initiale |
+| --- | --- | --- | --- |
+| `11` | Voie sûre, numéro trouvé | `ADDRESS` | `USABLE` |
+| `12` | Voie sûre, position aléatoire dans la voie | `STREET` | `USABLE`, approximation visible |
+| `21` | Voie probable, numéro trouvé | `ADDRESS` | `USABLE`, approximation visible |
+| `22` | Voie probable, position aléatoire dans la voie | `STREET` | `USABLE`, approximation visible |
+| `33` | Voie inconnue, position aléatoire dans la commune | `MUNICIPALITY` | `TO_VERIFY` |
+
+Le code et la précision du fichier restent attachés exclusivement à sa propre
+coordonnée ; ils ne sont jamais transférés à la coordonnée API. Chaque position
+candidate est validée séparément. Elle doit :
+
+- contenir deux nombres finis transformables en WGS84 ;
+- appartenir au contour de la France métropolitaine ;
+- porter le même code commune que l'adresse Sirene courante ;
+- se trouver dans le contour de cette commune ou à un kilomètre au plus de ce
+  contour, marge initiale qui absorbe la généralisation géométrique et les cas
+  proches d'une limite.
+
+Une position qui échoue à l'un de ces contrôles n'est pas utilisable. Une
+coordonnée API qui les satisfait reste `UNKNOWN/USABLE` en l'absence de qualité
+propre : elle n'est jamais présentée comme une position au numéro de rue. La
+marge de cohérence d'un kilomètre est versionnée avec la règle de résolution et
+n'est pas un réglage utilisateur.
+
+Le géocodeur de la Géoplateforme est appelé seulement lorsqu'aucune position
+n'a pu être retenue par les règles ci-dessous, notamment lorsque l'API échoue
+aux contrôles et que le fichier manque ou vaut `TO_VERIFY`. La requête, le
+résultat, le score, la date et le fournisseur restent distincts des deux
+sources Sirene. Si aucune position n'est assez fiable, la fiche va dans
 « Localisation à vérifier » et sa distance reste inconnue.
 
-### 5.7 Simplification géographique à évaluer
+### 5.7 Résultats géographiques et résolution
 
-La documentation officielle de l'API Sirene 3.11 indique désormais directement
-les champs `coordonneeLambertAbscisseEtablissement`,
-`coordonneeLambertOrdonneeEtablissement` et
-`identifiantAdresseEtablissement`. Cette évolution peut rendre le fichier
-mensuel de 772 Mo inutile pour le MVP.
+Sur 160 165 candidats Sirene, l'API fournissait 129 689 coordonnées et en
+laissait 30 476 sans coordonnées numériques. Le fichier mensuel a joint
+158 895 candidats : il fournit 30 402 positions absentes de l'API et ne laisse
+que 74 candidats sans position issue des deux sources. Le fichier reste donc
+dans le MVP.
 
-Avant de modifier la décision produit, un test réel doit comparer, sur tous les
-candidats du cercle de Dax :
+Pour les 128 493 candidats présents dans les deux sources, l'écart médian
+était de 20,1 m, mais 1 976 écarts dépassaient 1 km et deux dépassaient 100 km.
+Radar conserve les deux provenances et ne masque pas ces divergences.
 
-- le taux de coordonnées présentes dans l'API ;
-- leur cohérence avec le fichier mensuel ;
-- la précision apportée par les variables de qualité du fichier ;
-- le nombre de géocodages de repli nécessaires ;
-- le coût opérationnel des deux solutions.
+La résolution suit cet ordre :
 
-Si la couverture de l'API est suffisante, la recommandation est d'utiliser ses
-coordonnées en premier, puis le géocodeur de la Géoplateforme en repli, et de
-retirer le gros fichier mensuel du MVP. Ce serait plus simple et plus frais.
-Jusqu'à validation explicite de ce changement, le fichier mensuel reste la
-source de référence définie par `docs/product.md`.
+1. conserver les coordonnées API et fichier dans deux observations distinctes,
+   avec la qualité et la provenance propres à chacune ;
+2. appliquer à chacune les contrôles déterministes précédents ;
+3. retenir la coordonnée API valide comme position effective, avec la précision
+   `UNKNOWN`, sans lui attribuer le code de qualité du fichier ;
+4. si l'API n'est pas utilisable, retenir la coordonnée valide du fichier pour
+   les qualités `11`, `12`, `21` ou `22` ;
+5. appeler la Géoplateforme si aucune de ces positions n'est utilisable ou si
+   le seul repli fichier porte la qualité `33` ;
+6. conserver « Localisation à vérifier » si aucun résultat suffisant n'est
+   obtenu.
+
+Un écart supérieur à un kilomètre entre les deux sources est conservé comme
+diagnostic visible, mais ne transfère aucune qualité et n'invalide pas à lui
+seul une coordonnée qui satisfait ses propres contrôles : les millésimes et les
+précisions peuvent différer. Un échec de cohérence avec la commune, en revanche,
+écarte la position concernée de la résolution automatique.
+
+Le classement brut avec la coordonnée API puis le fichier en repli a donné
+146 166 positions dans le cercle exact, 13 925 hors cercle et 74 absences.
+Une coordonnée de qualité `33` ne décide toutefois jamais seule de l'inclusion
+exacte : son établissement reste à vérifier tant qu'aucun meilleur point
+n'existe.
 
 ### 5.8 Prospects déjà connus
 
@@ -401,10 +481,26 @@ Les résultats sont interprétés ainsi :
 - absence, erreur, quota ou réponse ambiguë : aucun changement d'état.
 
 Un passage en diffusion partielle déclenche le retrait des données qui ne sont
-plus réutilisables pour la prospection. Avant l'implémentation, la liste exacte
-des éléments minimaux pouvant être conservés pour reconnaître le SIRET et ne
-pas le réimporter doit faire l'objet d'une vérification de conformité. Cette
-documentation ne constitue pas un avis juridique.
+plus réutilisables pour la prospection. La procédure prudente est une purge de
+la fiche de prospection suivie, si sa conformité est confirmée, de la seule
+empreinte nécessaire pour ne pas la réimporter. Cette documentation ne
+constitue pas un avis juridique.
+
+Le statut de diffusion le plus récent doit être réconcilié pour tous les
+SIRET connus : un changement de diffusion ne modifie pas nécessairement
+`dateDernierTraitement`. La solution technique prudente envisagée après un
+passage en `P` est de purger la fiche de prospection puis de conserver dans une
+liste repoussoir dédiée uniquement une HMAC du SIRET ou du SIREN, avec une clé
+hors base. Sa base légale et sa durée restent à valider avant le début du
+jalon 6.
+
+Un contrôle ciblé du 7 septembre 2026 a recherché un établissement publié en
+diffusion partielle, puis l'a redemandé par son SIRET sans conserver cet
+identifiant dans le rapport. Les deux appels ont répondu `200`, la recherche
+ciblée a retrouvé le même objet, et l'établissement comme son unité légale
+étaient administrativement actifs mais en diffusion `P`. Le chemin technique
+permet donc de distinguer cette restriction d'une fermeture ; ce test ne décide
+pas de la politique juridique de conservation.
 
 ### 5.9 Fraîcheur et obsolescence
 
@@ -460,16 +556,19 @@ La requête fournit :
 - `lang=fr` ;
 - une liste explicite de champs nécessaires.
 
-La liste des champs doit au minimum couvrir l'UUID, l'URI, le titre, les types,
-la description, la position, l'adresse, les périodes `takesPlaceAt`, les
-contacts, le producteur de la donnée et les dates de mise à jour. Comme le
-paramètre `fields` remplace la sélection par défaut, un champ omis de cette
-liste ne sera pas supposé absent de la source.
+La liste validée couvre au minimum `uuid`, `uri`, `identifier`, `label`,
+`type`, `isLocatedAt`, `hasDescription`, `takesPlaceAt`, `hasContact`,
+`hasBookingContact`, `hasBeenCreatedBy`, `hasBeenPublishedBy`, `isOwnedBy`,
+`lastUpdate`, `lastUpdateDatatourisme` et `isObsolete`. Les autres rôles de
+contact documentés peuvent être demandés, même s'ils étaient absents de
+l'échantillon. Comme le paramètre `fields` remplace la sélection par défaut,
+un champ omis de cette liste ne sera jamais supposé absent de la source.
 
-Radar ne limite pas la date future dans la requête. Après normalisation, une
-nouvelle fiche n'est créée que si au moins une période publiée n'est pas
-terminée. Les événements déjà connus restent conservés après leur passage dans
-le passé.
+Radar n'envoie aucun filtre de date au fournisseur. Le test réel a montré
+qu'une borne de début peut exclure un événement déjà commencé mais toujours en
+cours. Après normalisation, une nouvelle fiche n'est créée que si au moins une
+période valide publiée n'est pas terminée. Les événements déjà connus restent
+conservés après leur passage dans le passé.
 
 La position renvoyée par DATAtourisme est contrôlée et la distance est
 recalculée localement. Une donnée hors du cercle exact ou hors de France
@@ -496,10 +595,12 @@ décrit ci-dessous.
 - le nombre d'UUID uniques ;
 - le nombre de pages et la dernière page annoncés.
 
-Une différence non expliquée rend le cycle partiel. La documentation officielle
-montre actuellement des formes de `next` hétérogènes : URL relative ou URL
-absolue en `http`, parfois avec un paramètre `api_key`. Le test réel doit en
-confirmer la forme. Dans tous les cas, l'adaptateur :
+Après épuisement des reprises, une différence non expliquée rend le cycle
+`PARTIAL` si des observations exploitables ont été conservées, sinon `FAILED`.
+Lors du test du
+6 septembre 2026, les liens `next` étaient des URL HTTPS vers l'hôte et
+l'endpoint attendus, sans paramètre `api_key`. Cette forme observée n'est pas
+considérée comme une garantie permanente. Dans tous les cas, l'adaptateur :
 
 1. accepte uniquement une URL relative ou une URL absolue dont l'hôte est
    exactement `api.datatourisme.fr`, sans port inattendu ;
@@ -512,31 +613,37 @@ confirmer la forme. Dans tous les cas, l'adaptateur :
 5. ne journalise et ne persiste qu'une forme assainie, sans secret.
 
 Cette canonicalisation conserve le curseur opaque fourni sans permettre au
-fournisseur de rediriger la clé. Les chemins exacts acceptés seront figés par
-le test de contrat afin de ne pas casser une transition documentée entre
-l'endpoint préfiltré et `/catalog`.
+fournisseur de rediriger la clé. Le chemin validé est
+`/v1/entertainmentAndEvent` ; toute évolution est d'abord traitée comme une
+rupture de contrat visible.
+
+La collecte validée a réconcilié 2 836 objets annoncés et reçus, 2 836 UUID
+uniques et 12 pages, dont une dernière page de 86 objets. Une répétition
+immédiate a produit le même ensemble d'UUID. Cela prouve la stabilité de cette
+exécution à court terme, pas celle de tous les objets à travers les années.
 
 ### 6.5 Identité et déduplication
 
-L'UUID DATAtourisme identifie d'abord l'objet publié par cette source. Il ne
-devient l'identité d'une édition commerciale qu'après validation de son usage
-sur des événements récurrents et sur plusieurs éditions annuelles.
+Pour le MVP, le couple `(DATAtourisme, UUID)` identifie l'objet publié par
+cette source et donc la fiche qu'il met à jour. Toutes les périodes publiées
+par cet objet restent rattachées à cette fiche, y compris lorsqu'elles couvrent
+plusieurs années. Ce choix respecte le regroupement du fournisseur sans
+inventer un discriminant à partir d'une date mutable.
 
-Tant que le fournisseur conserve le même UUID pour la même édition, une
-nouvelle observation met à jour la même fiche. Deux UUID différents restent
-deux fiches distinctes dans le MVP, même si leur titre, leur lieu et leurs dates
-se ressemblent. Ils peuvent être signalés ou masqués manuellement comme
-doublons, mais ne sont jamais fusionnés automatiquement.
+Deux UUID différents restent deux fiches distinctes, même si leur titre, leur
+lieu et leurs dates se ressemblent. Ils peuvent être signalés ou masqués
+manuellement comme doublons, mais ne sont jamais fusionnés automatiquement.
+Une réutilisation future clairement contradictoire d'un UUID est signalée
+comme une rupture du contrat source ; elle ne déclenche pas silencieusement
+une nouvelle formule d'identité.
 
-Si le test montre qu'un UUID est réutilisé pour des éditions commercialement
-distinctes, l'adaptateur devra produire une identité d'édition documentée, par
-exemple à partir d'un identifiant d'édition réellement stable fourni par la
-source. Une simple date mutable ne sera pas choisie sans preuve de stabilité.
-Le modèle générique accepte cette identité composée tout en conservant l'UUID
-brut dans la provenance.
+L'observation concernée est alors conservée en quarantaine pour le diagnostic,
+sans devenir la projection courante ni créer une seconde fiche. Le cycle est
+`PARTIAL` et l'objet reste bloqué jusqu'à une évolution explicite, documentée et
+testée du contrat de la source.
 
-L'URI est conservée lorsqu'elle existe, mais n'est pas substituée à l'UUID sans
-validation spécifique.
+L'URI et `identifier` sont conservés pour la provenance et le diagnostic, mais
+ne se substituent pas à l'UUID comme clé de rapprochement.
 
 ### 6.6 Périodes et état temporel
 
@@ -548,21 +655,25 @@ Chaque élément de `takesPlaceAt` est normalisé sans perdre les valeurs source
 - détails textuels d'ouverture ou de période.
 
 Un intervalle continu devient une période. Plusieurs intervalles non
-consécutifs restent plusieurs périodes de la même fiche si DATAtourisme les
-regroupe sous une même identité d'édition validée. La seule réutilisation d'un
-UUID ne suffit pas si elle désigne en réalité plusieurs éditions commerciales.
-Radar n'invente aucune occurrence future à partir d'un titre ou d'une habitude
-supposée.
+consécutifs restent plusieurs périodes de la même fiche lorsque DATAtourisme
+les regroupe sous le même UUID. Radar n'invente aucune occurrence future à
+partir d'un titre ou d'une habitude supposée.
 
 Les valeurs sont interprétées dans le fuseau Europe/Paris lorsqu'aucun fuseau
 explicite n'est fourni, tout en conservant la valeur source. Si une heure de
 fin manque, la règle de fin de journée définie dans `docs/product.md`
 s'applique.
 
-Les cas récurrents, les heures manquantes et les changements de dates doivent
-faire partie de l'échantillon de validation. Une période illisible rend
-l'observation invalide et visible dans le bilan ; elle ne produit pas une date
-inventée.
+La validation a observé 3 231 périodes sur 2 836 objets, dont 167 objets à
+périodes multiples et quatre objets dont les débuts couvrent plusieurs
+années. Au moment du test, 2 694 objets possédaient une période non passée et
+142 seulement des périodes passées. Une période avait un début postérieur à
+sa fin.
+
+Une période illisible ou inversée est rejetée et visible dans le bilan ; elle
+ne produit pas une date inventée. Les autres périodes valides du même objet
+peuvent être importées. Un ensemble vide ou invalide ne remplace jamais le
+dernier ensemble source valide d'une fiche connue.
 
 ### 6.7 Organisateur, contacts et statut
 
@@ -570,16 +681,30 @@ La propriété DATAtourisme `hasBeenCreatedBy` identifie le producteur de la
 donnée. Elle ne doit pas être présentée automatiquement comme l'organisateur
 de l'événement.
 
+Le même principe s'applique à `hasBeenPublishedBy` et `isOwnedBy`, qui
+décrivent respectivement des rôles de publication et de propriété. Aucun champ
+du contrat observé ne fournit un organisateur fiable : l'organisateur source
+reste donc inconnu, sauf preuve structurée ajoutée ultérieurement ou correction
+de l'utilisateur.
+
 De même, un contact général, administratif, de réservation ou de publication
 n'est présenté comme contact confirmé de l'organisateur que si la source
 l'indique explicitement. Dans les autres cas, Radar conserve sa portée comme
 « inconnue » ou le présente comme relais de contact.
 
-Un statut « annulé » ou « reporté » n'est appliqué que depuis une propriété
-structurée dont le sens a été validé. Il n'est pas déduit automatiquement d'un
-mot dans le titre ou la description. L'endpoint `POST /catalog/{uuid}/contact`
-permet au fournisseur de relayer certains messages, mais Radar ne l'utilise
-pas dans le MVP, qui n'envoie aucun email.
+La validation a trouvé des structures de contact sur 2 828 objets, avec des
+téléphones et pages web, mais aucune adresse email. Depuis le 26 juin 2026,
+DATAtourisme ne diffuse plus les emails dans l'API. Radar enregistre donc
+« aucun email connu de cette source », jamais « cet événement n'a pas
+d'email ». Les contacts observés gardent une portée inconnue ou de relais et
+ne prouvent pas qu'ils appartiennent à l'organisateur.
+
+Aucun statut structuré d'annulation ou de report n'a été observé et
+`isObsolete` était absent même lorsqu'il était demandé. Le statut déclaré
+DATAtourisme est donc `UNKNOWN`. Il n'est pas déduit d'un mot dans le titre ou
+la description. L'endpoint `POST /catalog/{uuid}/contact` peut relayer des
+messages au fournisseur, mais Radar ne l'utilise pas : le MVP est strictement
+en lecture.
 
 ### 6.8 Fraîcheur et disparition
 
@@ -591,12 +716,11 @@ Une absence unique ne modifie pas la fiche. Une observation peut être marquée
 
 1. elle était attendue dans le même périmètre ;
 2. elle manque lors de trois cycles complets et comparables consécutifs ;
-3. une vérification ciblée de son UUID et de son identité d'édition ne retrouve
-   plus cette édition, ou confirme son retrait.
+3. une vérification ciblée de son UUID ne retrouve plus l'objet, ou confirme
+   son retrait.
 
 Ce marquage ne signifie ni « annulé », ni « masqué », ni « supprimé ». Une
-nouvelle observation reconnue comme la même identité d'édition lève le signal
-d'obsolescence.
+nouvelle observation portant le même UUID lève le signal d'obsolescence.
 
 ## 7. Reprises, quotas et erreurs
 
@@ -619,6 +743,9 @@ dans `docs/architecture.md`.
 
 ## 8. Validation réelle autour de Dax
 
+La validation a été achevée le 6 septembre 2026. Son compte rendu chiffré est
+`docs/source-validation-dax-2026-09.md`.
+
 ### 8.1 Adresse de référence
 
 La mairie publie l'adresse postale suivante :
@@ -628,67 +755,54 @@ Mairie de Dax, rue Saint-Pierre, CS 9007
 40107 Dax Cedex
 ```
 
-Pour rechercher le point physique, le contrôle préliminaire utilise
-`12 rue Saint-Pierre, 40100 Dax`. Le point géocodé est présenté à l'utilisateur
-avant de créer le cercle de 50 km. Le test doit inclure des communes de
-plusieurs départements si le cercle les rencontre ; aucune limite
-administrative n'est ajoutée.
+Pour le test, le point physique de `12 rue Saint-Pierre, 40100 Dax` a été
+utilisé. Dans le produit, ce résultat sera toujours présenté à l'utilisateur
+avant de créer le cercle de 50 km. La zone validée rencontre les Landes et les
+Pyrénées-Atlantiques ; aucune limite administrative n'a été ajoutée.
 
-### 8.2 Prérequis
+### 8.2 Prérequis utilisés
 
-La validation complète nécessite :
+La validation a utilisé :
 
 - une clé publique API Sirene configurée localement ;
 - une clé API DATAtourisme configurée localement ;
 - le millésime courant des contours administratifs ;
-- le fichier courant de géolocalisation Sirene tant que cette source reste
-  dans le MVP.
+- le fichier courant de géolocalisation Sirene retenu comme complément et
+  repli.
 
 Les clés ne doivent pas être communiquées dans un document, un ticket, une
-capture d'écran ou une conversation. Elles seront placées directement dans la
-configuration secrète de l'environnement de test.
+capture d'écran ou une conversation. Elles ont été placées directement dans
+la configuration locale ignorée par Git.
 
-### 8.3 Contrôles Sirene
+### 8.3 Contrôles Sirene réalisés
 
-Le rapport de validation doit consigner :
+Le rapport de validation consigne la requête logique et la version d'API, les
+communes candidates, les lots, les totaux, les pages, les SIRET uniques, le
+contrôle local de l'état courant et de la diffusion, ainsi que la comparaison
+des coordonnées API et du fichier mensuel. Il distingue la répartition brute
+dans le rayon, hors rayon et sans position, les qualités approximatives et les
+anomalies. Le géocodeur a été validé pour l'adresse de référence ; son repli
+sur les établissements devra encore être couvert par des tests d'adaptateur et
+un petit échantillon, sans lancer une campagne massive pendant le cadrage.
 
-- la requête logique et la version d'API ;
-- les communes candidates et la version de leurs contours ;
-- les lots, totaux annoncés, pages, SIRET reçus et SIRET uniques ;
-- des exemples d'établissements actifs, fermés, sièges et non-sièges ;
-- le comportement des périodes historiques et de la période courante ;
-- les statuts de diffusion `O` et `P`, sans exploiter les données protégées ;
-- la concordance entre API, fichier géographique et géocodage de repli ;
-- la répartition dans le rayon, hors rayon et « Localisation à vérifier » ;
-- les champs réellement disponibles et les anomalies observées ;
-- la durée, le nombre d'appels et tout incident de quota.
+### 8.4 Contrôles DATAtourisme réalisés
 
-### 8.4 Contrôles DATAtourisme
-
-Le rapport doit consigner :
-
-- la requête, les champs demandés et la version d'API ;
-- le total, toutes les pages suivies par `next` et les UUID uniques ;
-- des événements simples, continus, récurrents et publiés longtemps à
-  l'avance ;
-- les événements sans contact ou organisateur ;
-- les positions, adresses et distances recalculées ;
-- la stabilité des UUID entre deux collectes ;
-- le comportement des UUID entre deux éditions annuelles distinctes et pour
-  les événements récurrents ;
-- les producteurs de données et les contacts sans les confondre avec les
-  organisateurs ;
-- les statuts explicites disponibles et les changements de dates ;
-- les champs manquants, valeurs inattendues et objets rejetés.
+Le rapport consigne la requête et ses champs explicites, les 12 pages suivies
+par `next`, les UUID uniques, les positions recalculées, les périodes simples
+et multiples, les contacts et les rôles de provenance. Il documente aussi la
+stabilité à court terme des UUID, l'absence de statut ou d'organisateur fiable,
+le retrait des emails de l'API et la période inversée. La stabilité entre
+éditions annuelles reste une limite connue ; l'identité source retenue évite
+d'en faire une hypothèse cachée.
 
 ### 8.5 Critère de sortie
 
-Un connecteur n'est validé pour le MVP que lorsque son rapport démontre une
-pagination terminée, des comptages cohérents, une normalisation reproductible
-et l'absence d'omission silencieuse connue. Les anomalies restantes sont
-classées en :
+Un contrat d'entrée est suffisamment validé pour commencer son connecteur
+lorsque son rapport démontre une pagination terminée, des comptages cohérents,
+des règles de normalisation reproductibles et l'absence d'omission silencieuse
+connue. Les anomalies restantes sont classées en :
 
-- bloquantes avant implémentation ;
+- préalables au lot d'implémentation concerné ;
 - acceptables avec affichage explicite ;
 - limites connues de la source.
 
@@ -719,37 +833,30 @@ email, téléphone ou rôle trouvé conservera l'URL exacte et la date de lectur
 Les coordonnées privées ou sans rapport professionnel ne seront pas
 collectées.
 
-## 10. Points à résoudre avant de valider les connecteurs
+## 10. Décision à fermer avant le jalon 6
 
-La rédaction peut continuer, mais les points suivants doivent être résolus
-avant de considérer les connecteurs concernés comme terminés :
-
-1. obtenir et configurer localement une clé publique Sirene et une clé
-   DATAtourisme ;
-2. tester l'expression exacte garantissant l'état courant dans la recherche
-   multicritère Sirene ;
-3. comparer les coordonnées intégrées à l'API Sirene 3.11 au fichier mensuel
-   et décider si ce dernier reste nécessaire au MVP ;
-4. fixer les niveaux de qualité géographique après examen du fichier réel ;
-5. déterminer si l'UUID DATAtourisme identifie durablement une édition ou s'il
-   faut une règle d'identité spécifique aux éditions récurrentes ;
-6. valider le mapping complet des périodes, contacts, organisateurs et statuts,
-   ainsi que les formes et chemins de pagination `next`, sur des réponses
-   DATAtourisme réelles ;
-7. valider le traitement minimal et licite d'un passage Sirene en diffusion
-   partielle avant une mise en production.
+Les contrats techniques des deux sources sont suffisamment validés pour
+commencer le socle et les adaptateurs indépendants de cette politique. Il reste
+à faire valider avant le début du jalon 6 le
+traitement minimal et licite d'un passage Sirene en diffusion partielle :
+portée du blocage, purge, finalité et durée éventuelle d'une empreinte HMAC.
+Cette question de conformité ne bloque pas le socle applicatif du jalon 2,
+mais le connecteur Sirene ne peut pas être mis en production sans sa résolution.
 
 ## 11. Références officielles
 
 - [API Sirene open data — data.gouv.fr](https://www.data.gouv.fr/dataservices/api-sirene-open-data)
 - [Accès et téléchargement de Sirene — Insee](https://www.insee.fr/fr/information/3591226)
 - [Actualités Sirene de juin 2026 — Insee](https://www.insee.fr/fr/information/9019311)
+- [Diffusion partielle et droit d'opposition — Insee](https://www.insee.fr/fr/information/6790269?question=sont-informations-diffusees-lesquelles-pouvez-exercer-droit-d-opposition)
+- [Liste repoussoir et opposition à la prospection — CNIL](https://www.cnil.fr/fr/comment-utiliser-une-liste-repoussoir-pour-respecter-lopposition-la-prospection)
 - [Modalités de connexion à l'API Sirene](https://static.insee.fr/api-sirene/Insee_API_publique_modalites_connexion.pdf)
 - [Géolocalisation des établissements Sirene](https://www.data.gouv.fr/datasets/geolocalisation-des-etablissements-du-repertoire-sirene-pour-les-etudes-statistiques)
 - [API de géocodage de la Géoplateforme](https://cartes.gouv.fr/aide/fr/guides-utilisateur/utiliser-les-services-de-la-geoplateforme/geocodage/)
 - [Contours administratifs — data.gouv.fr](https://www.data.gouv.fr/datasets/contours-administratifs)
 - [API Découpage administratif](https://www.data.gouv.fr/dataservices/api-decoupage-administratif-api-geo)
 - [Documentation de l'API DATAtourisme v1](https://api.datatourisme.fr/v1/docs)
+- [Retrait des adresses email DATAtourisme](https://support.datatourisme.fr/t/protection-des-adresses-email-ce-qui-change/3133)
 - [FAQ et conditions d'accès DATAtourisme](https://www.datatourisme.fr/faq/)
 - [Ressources juridiques DATAtourisme](https://www.datatourisme.fr/ressources-juridiques/)
 - [Adresse de la mairie de Dax](https://www.dax.fr/fiche-annuaire/mairie/)

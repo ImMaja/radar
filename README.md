@@ -16,8 +16,9 @@ pas les fournisseurs externes.
 
 ## État du projet
 
-Le projet est actuellement en phase de conception documentaire. Aucun code
-applicatif ni aucune infrastructure ne sont encore créés.
+Le cadrage documentaire et la validation réelle des contrats externes autour
+de Dax sont terminés. Aucun code applicatif ni aucune infrastructure ne sont
+encore créés ; la prochaine étape est le socle applicatif minimal du jalon 2.
 
 Le MVP est prévu pour un seul utilisateur et un seul food truck. Il sera
 accessible sur Internet derrière une authentification, sans exposer
@@ -25,8 +26,11 @@ PostgreSQL publiquement.
 
 ## Sources prévues pour le MVP
 
-- API Sirene 3.11 de l'Insee pour les établissements ;
-- référentiels géographiques officiels et Géoplateforme pour la localisation ;
+- API Sirene 3.11 de l'Insee pour les établissements et leurs coordonnées
+  courantes ;
+- fichier mensuel de géolocalisation Sirene comme complément et repli, puis
+  Géoplateforme pour les cas à géocoder ;
+- référentiel officiel des contours de communes ;
 - API DATAtourisme v1 pour les événements.
 
 Les sources supplémentaires, l'enrichissement des sites officiels, le CRM et
@@ -56,6 +60,7 @@ de rendu serveur ne le justifie.
 - [Architecture](docs/architecture.md)
 - [Modèle de données](docs/database.md)
 - [Roadmap](docs/roadmap.md)
+- [Validation des sources autour de Dax](docs/source-validation-dax-2026-09.md)
 
 Ces documents sont les sources de vérité du projet. Toute implémentation qui
 s'en écarte doit signaler l'écart au lieu de choisir silencieusement une autre
@@ -83,3 +88,7 @@ modification.
 Les clés Sirene, DATAtourisme et tout autre secret devront être fournis par la
 configuration locale ou de production. Aucun secret ne devra être ajouté au
 dépôt.
+
+Le fichier `.env.example` documente uniquement les noms de variables. Les
+valeurs locales vont dans `.env.local`, ignoré par Git ; elles ne sont jamais
+recopiées dans une documentation ou une sortie de diagnostic.

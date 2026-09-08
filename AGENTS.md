@@ -13,6 +13,8 @@ Before making significant changes, read the relevant documentation:
 - External data sources: `docs/data-sources.md`
 - Lead/event scoring: `docs/scoring.md`
 - Roadmap: `docs/roadmap.md`
+- Validated source contracts and Dax measurements:
+  `docs/source-validation-dax-2026-09.md`
 
 These files are the source of truth.
 

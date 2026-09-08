@@ -2,7 +2,7 @@
 
 > Statut : conception logique du MVP
 >
-> Dernière mise à jour : 3 septembre 2026
+> Dernière mise à jour : 8 septembre 2026
 >
 > SGBD cible : PostgreSQL avec PostGIS
 
@@ -85,17 +85,18 @@ de préférence un UUID. Les identifiants externes restent des données :
 
 - SIREN : unité légale ou organisme ;
 - SIRET : établissement physique ;
-- UUID DATAtourisme : objet événementiel de cette source, éventuellement
-  complété par un discriminant d'édition validé par l'adaptateur ;
+- UUID DATAtourisme : objet événementiel de cette source et identité de sa
+  fiche dans le MVP ;
 - identifiant technique documenté : objet d'une future source dépourvue
   d'identifiant publié fiable.
 
 Un identifiant externe n'est globalement unique qu'avec son autorité émettrice
 et son espace de noms. Un SIREN ne sert jamais à fusionner deux établissements
 et deux UUID DATAtourisme différents ne sont jamais fusionnés automatiquement
-dans le MVP. Si DATAtourisme réutilise un UUID entre éditions distinctes,
-l'espace de noms de l'identité métier inclut le discriminant documenté par
-l'adaptateur ; l'UUID brut reste conservé dans l'observation source.
+dans le MVP. Toutes les périodes publiées sous le même UUID restent attachées
+à la même fiche. Une réutilisation future manifestement contradictoire est une
+rupture de contrat à signaler, pas une raison d'inventer silencieusement un
+discriminant fondé sur une date mutable.
 
 ### 2.5 Données minimisées
 
@@ -197,6 +198,8 @@ collection_cycle
 
 dataset_release ──< commune_boundary
 collection_cycle réussi ──> connector_coverage
+
+prospecting_suppression (liste repoussoir HMAC indépendante des fiches)
 ```
 
 ## 5. Compte unique et sessions
@@ -481,8 +484,11 @@ contient la projection source courante :
 
 `organizer_organization_id` n'est renseigné que lorsqu'une identité fiable de
 l'organisateur est fournie ou confirmée. Une ressemblance de nom, le producteur
-DATAtourisme et le champ `hasBeenCreatedBy` ne suffisent pas. Le texte source
-reste disponible lorsque l'organisateur ne peut pas être relié.
+DATAtourisme, `hasBeenCreatedBy`, `hasBeenPublishedBy` et `isOwnedBy` ne
+suffisent pas. Dans le contrat DATAtourisme du MVP, l'organisateur reste donc
+vide et le statut déclaré vaut `UNKNOWN`, sauf correction utilisateur ou
+nouvelle preuve structurée. Les rôles de production, publication et propriété
+restent dans la provenance et l'observation source.
 
 Une fréquentation numérique est un entier strictement positif et n'est
 renseignée que si son contexte la rattache à cette édition. La capacité
@@ -571,7 +577,9 @@ Une fiche événementielle apparaît dans les listes ordinaires si elle n'est pa
 masquée et possède au moins une période effective en cours ou future. Un
 événement à venir déclaré `CANCELLED` est exclu par défaut, mais peut être
 inclus par le filtre prévu. Une nouvelle période non terminée reçue pour une
-fiche passée la rend à nouveau visible.
+fiche passée la rend à nouveau visible uniquement en l'absence d'ensemble
+utilisateur courant. Si des périodes utilisateur existent, la nouvelle version
+source est signalée mais ne remplace pas l'ensemble effectif.
 
 La requête de l'onglet « Fiches masquées » repose sur `hidden_at` et ignore les
 conditions temporelles, administratives et géographiques. Elle permet donc de
@@ -597,11 +605,18 @@ Une localisation est une version attribuée à une fiche. Elle contient :
 - utilisabilité parmi `USABLE`, `TO_VERIFY`, `MISSING` ;
 - observation source, version de jeu de données et résultat de géocodage
   associés lorsqu'ils existent ;
+- version de règle de résolution et diagnostics non sensibles lorsqu'il s'agit
+  de la projection source effective ;
 - `is_current`, `created_at` et `retired_at`.
 
-Le code de qualité brut n'est jamais interprété sans son fournisseur. Les
-seuils qui conduisent à `USABLE` ou `TO_VERIFY` seront fixés après le test réel
-de Dax décrit dans `docs/data-sources.md`.
+Le code de qualité brut n'est jamais interprété sans son fournisseur. Pour le
+fichier Sirene validé, `11` devient `ADDRESS/USABLE`, `12` devient
+`STREET/USABLE`, `21` devient `ADDRESS/USABLE`, `22` devient
+`STREET/USABLE` et `33` devient `MUNICIPALITY/TO_VERIFY`. Le caractère
+approximatif de `12`, `21` et `22` reste visible. Ces codes ne qualifient que
+la coordonnée du fichier. Un code inconnu ou une paire invalide devient
+`TO_VERIFY` ou `MISSING`. Une coordonnée API valide est `UNKNOWN/USABLE` et
+n'est jamais présentée comme précise au numéro de rue.
 
 Il existe au maximum une localisation source courante et une localisation
 utilisateur courante par fiche. La localisation effective est la version
@@ -612,10 +627,20 @@ utilisateur courante.
 
 Une collecte peut remplacer la localisation source courante d'une fiche, y
 compris d'une fiche masquée. Elle ne peut ni retirer ni modifier la version
-utilisateur. Le choix entre fichier Sirene, coordonnées de l'API Sirene et
-géocodage de repli est ainsi une règle de résolution, pas une dépendance du
-schéma. Si le gros fichier mensuel sort du MVP, aucune table métier ni clé
-étrangère ne change.
+utilisateur. Les coordonnées candidates API et fichier restent dans deux
+observations distinctes. La localisation source courante est uniquement la
+projection du candidat finalement retenu et recopie sa provenance et sa qualité
+propres, jamais celles de l'autre source.
+
+Pour Sirene, chaque candidat doit contenir des nombres finis, se trouver en
+France métropolitaine, porter le code commune courant et être dans le contour
+de cette commune ou à un kilomètre au plus de celui-ci. La règle choisit l'API
+si elle passe ces contrôles, sinon le fichier lorsqu'il les passe avec une
+qualité `11`, `12`, `21` ou `22`, puis le géocodeur. La qualité `33` ne produit
+pas seule une localisation effective. Un écart entre deux candidats valides de
+plus d'un kilomètre est un diagnostic conservé, pas un transfert de qualité ni
+un rejet automatique. La version de cette règle et sa marge sont conservées
+avec la résolution.
 
 Une fiche sans point conserve son adresse et une utilisabilité `MISSING` ou
 `TO_VERIFY`. La distance effective vaut alors `NULL` et elle ne satisfait
@@ -736,8 +761,7 @@ Les secrets de connexion n'y figurent pas.
 Cette table centralise les identifiants fiables :
 
 - autorité émettrice ;
-- espace de noms, par exemple `SIREN`, `SIRET`, `DATATOURISME_UUID` ou une
-  identité d'édition DATAtourisme validée ;
+- espace de noms, par exemple `SIREN`, `SIRET` ou `DATATOURISME_UUID` ;
 - valeur canonique, nullable uniquement après un traitement de conformité ;
 - empreinte technique et version de son algorithme ;
 - référence facultative vers l'organisme, l'établissement ou l'opportunité
@@ -750,13 +774,13 @@ Au plus une des trois références de cible est renseignée. La paire
 autorisée, cette empreinte sert surtout de clé technique et la valeur canonique
 reste disponible pour les requêtes métier.
 
-Après une restriction, conserver uniquement un HMAC calculé avec un secret
-applicatif serait techniquement plus résistant qu'un simple hachage devinable
-pour un identifiant à faible entropie comme un SIRET. Il ne s'agit toutefois
-que d'une option : sa conservation, sa finalité et sa durée doivent être
-validées au titre de la conformité avant implémentation. Le modèle autorise
-aussi le retrait complet de l'empreinte et de l'identité si cette validation
-l'exige.
+Après une restriction Sirene, l'éventuelle HMAC ne remplace pas l'empreinte de
+cette table : elle est isolée dans `prospecting_suppression` et ne référence
+pas la fiche purgée. Pour un passage en diffusion partielle, la ligne
+`external_identity`, sa valeur canonique et son empreinte technique ordinaire
+sont supprimées après création éventuelle de la HMAC autorisée. La possibilité
+de caviarder une identité sans la supprimer reste réservée à d'autres cas de
+conformité dont la politique l'autorise.
 
 Les colonnes structurées `siren` et `siret` peuvent dupliquer ces deux
 identifiants sur leur entité pour les contraintes métier et les requêtes. Elles
@@ -779,9 +803,11 @@ Un lien source représente l'objet stable d'une source attaché à une fiche :
 
 La paire source-identité est unique. Elle constitue la première clé de
 reconnaissance d'une nouvelle collecte et reste attachée à une fiche masquée.
-Un lien `RESTRICTED` empêche une réimportation incorrecte tant que la
-conservation de l'identité minimale nécessaire est autorisée. Une obligation
-de retrait complet prévaut sur cette protection technique.
+L'état `RESTRICTED` permet une transition de conformité atomique et les cas où
+la conservation du lien reste licite. Pour une diffusion partielle Sirene, le
+lien, ses présences et son identité sont supprimés après inscription éventuelle
+dans la liste repoussoir dédiée. Une obligation de retrait complet prévaut
+toujours sur cette protection technique.
 
 ### 13.4 `source_observation`
 
@@ -796,7 +822,8 @@ Une observation est une révision normalement immuable contenant :
 - empreinte du contenu normalisé ;
 - charge `jsonb` minimisée avec les valeurs source autorisées ;
 - URL ou référence source propre à cette révision ;
-- statut de validation et éventuelle erreur de normalisation non sensible.
+- statut de validation, notamment `VALID`, `REJECTED` ou
+  `IDENTITY_CONFLICT`, et éventuelle erreur de normalisation non sensible.
 
 La charge est validée par le modèle typé de l'adaptateur avant insertion. Le
 `jsonb` n'est pas utilisé comme substitut aux colonnes relationnelles servant
@@ -815,6 +842,12 @@ le lien et l'empreinte évite les copies quotidiennes strictement identiques.
 Le retrait ou l'anonymisation de champs imposé par la conformité constitue la
 seule exception : la charge peut alors être caviardée et reçoit `redacted_at`
 sans conserver ailleurs la valeur retirée.
+
+Lors d'un passage Sirene en diffusion partielle, toute observation permettant
+encore d'identifier l'établissement ou de reconstituer ses données de
+prospection est supprimée ou caviardée. Elle ne conserve ni SIRET, ni SIREN, ni
+empreinte ordinaire de ces identifiants. Si aucune partie réellement
+non identifiante ne reste utile, l'observation entière est supprimée.
 
 ### 13.5 `source_sighting`
 
@@ -851,8 +884,8 @@ utilisées par d'anciens cycles.
 Le fichier mensuel de géolocalisation Sirene n'est pas chargé intégralement
 dans une table permanente. Il est contrôlé dans un espace de travail, joint
 aux candidats, puis seules les localisations utiles et la provenance de la
-version sont conservées. Cette règle évite de transformer un fichier de près
-de 772 Mo en dépendance structurelle de Radar.
+version sont conservées. Cette règle évite de transformer le fichier validé de
+809 215 388 octets en dépendance structurelle de Radar.
 
 ### 14.2 `commune_boundary`
 
@@ -1061,6 +1094,18 @@ Cette table sert aux totaux et au diagnostic, y compris pour un établissement
 hors du cercle exact qui ne crée pas de fiche. Elle ne doit pas devenir une
 copie supplémentaire du contenu source.
 
+Une diffusion partielle Sirene supprime les `collection_item` identifiants de
+l'objet concerné, y compris leur valeur, leur empreinte et leurs liens. Les
+compteurs agrégés du lot et du cycle peuvent rester ; ils ne permettent pas de
+reconstituer l'identifiant retiré.
+
+Les compteurs de complétude portent sur tous les objets reçus avant la décision
+métier. Un établissement devenu non actif pendant une pagination, un événement
+entièrement passé ou une période invalide peut donc compter dans le total reçu
+et unique avec une décision `REJECTED`, sans produire de fiche. Cette
+distinction est indispensable pour réconcilier le fournisseur sans confondre
+volume brut et opportunités importées.
+
 ### 15.9 `collection_reference_usage`
 
 Cette association relie un cycle à chaque `dataset_release` utilisé, avec son
@@ -1185,6 +1230,13 @@ Les contraintes uniques rendent l'opération idempotente en cas de reprise.
 Une collision créée par deux transactions est résolue en relisant la ligne
 gagnante, jamais en créant une deuxième fiche.
 
+Si le contrôle de contrat qualifie l'observation
+`IDENTITY_CONFLICT`, la transaction s'arrête avant la mise à jour des
+projections. L'observation en quarantaine reste liée au diagnostic, la
+projection courante et la fiche existante restent inchangées, aucune seconde
+fiche n'est créée et le cycle se termine `PARTIAL`. Seule une évolution
+explicite et testée du contrat source permet de reprendre cet objet.
+
 ### 17.2 Objet masqué
 
 Le lien source et l'identité d'une fiche masquée restent présents. Une nouvelle
@@ -1192,10 +1244,11 @@ observation aboutit donc à la fiche existante. Sa projection source peut être
 rafraîchie, mais `hidden_at`, son motif, sa note et ses corrections restent
 inchangés. Le service de collecte ne possède aucune opération de démasquage.
 
-Le démasquage est une commande utilisateur distincte qui efface uniquement les
-colonnes de masquage. Il ne change ni les sources, ni l'état administratif, ni
-l'état temporel. Un événement toujours passé ne réapparaît donc pas dans les
-listes ordinaires après cette commande.
+Le démasquage est une commande utilisateur distincte qui efface les colonnes de
+masquage et, lorsqu'il existe, `duplicate_of_opportunity_id` dans la même
+transaction. Il ne change ni les sources, ni l'état administratif, ni l'état
+temporel. Un événement toujours passé ne réapparaît donc pas dans les listes
+ordinaires après cette commande.
 
 ### 17.3 Absence d'une collecte
 
@@ -1312,19 +1365,32 @@ commande distincte du masquage. Elle peut :
 - retirer un contact ou une localisation ;
 - effacer une correction ou une note qui servirait à contourner la
   restriction ;
-- passer le lien source à `RESTRICTED` ;
-- remplacer éventuellement une identité externe en clair par une empreinte
-  HMAC, uniquement si la validation de conformité conclut que sa conservation
-  est licite, nécessaire et suffisamment limitée.
+- retirer le lien source, ses présences et son identité externe ;
+- supprimer les éléments de collecte, caches, exports et journaux contenant
+  encore l'identifiant ou une donnée de prospection concernée, tout en gardant
+  seulement les compteurs agrégés non identifiants ;
+- inscrire éventuellement une empreinte HMAC dans une liste repoussoir dédiée,
+  uniquement si la validation de conformité conclut que sa conservation est
+  licite, nécessaire et suffisamment limitée.
 
 L'opération consigne sa date, son motif normatif, les catégories de données
 traitées et un identifiant de procédure, mais ne recopie pas la donnée retirée
 dans un journal. Elle doit être idempotente.
 
-La liste précise des données Sirene pouvant rester après un passage en
-diffusion partielle est encore à valider avant le connecteur de production.
-Le schéma permet le retrait des valeurs et, si elle est validée, la conservation
-d'une empreinte ; ce document ne décide pas à lui seul de leur licéité.
+Si elle est juridiquement validée, la table logique `prospecting_suppression`
+contient uniquement : espace de noms `SIRET` ou `SIREN`, HMAC, version de clé,
+motif `SOURCE_PARTIAL_DIFFUSION`, source, dates de détection et de dernière
+confirmation, et date de levée éventuelle. Le SIRET ou SIREN brut, le nom,
+l'adresse, la fiche et ses contacts n'y sont pas copiés. La clé HMAC reste hors
+base. Une contrainte unique sur l'espace de noms et l'empreinte empêche les
+doublons actifs.
+
+La base légale, la portée exacte et la durée de cette empreinte doivent être
+validées avant le début du jalon 6. Une empreinte HMAC est une donnée
+pseudonymisée, pas anonyme. Si sa conservation n'est pas validée, la procédure
+retire entièrement l'identité et accepte de ne plus disposer de cette barrière
+technique ; aucun connecteur Sirene ne peut être mis en production tant que la
+politique n'est pas arrêtée. Ce document ne décide pas à lui seul de la licéité.
 
 ### 19.3 Conservation technique
 
@@ -1396,9 +1462,8 @@ Les tests d'intégration de la base devront démontrer au minimum que :
 3. un même couple source-identité métier met à jour la même fiche ;
 4. deux SIRET différents d'un même SIREN peuvent produire deux prospects ;
 5. deux UUID DATAtourisme différents ne fusionnent pas automatiquement ;
-6. si un UUID DATAtourisme est réutilisé entre éditions distinctes, la règle
-   d'identité validée crée deux fiches sans casser les mises à jour d'une même
-   édition ;
+6. le même UUID DATAtourisme met à jour la même fiche tout en conservant les
+   révisions et ses différents ensembles de périodes ;
 7. une fiche masquée reste masquée après une nouvelle observation ;
 8. une correction, une note, un ensemble de contacts utilisateur et un
    ensemble de périodes utilisateur survivent à une synchronisation ;
@@ -1413,29 +1478,32 @@ Les tests d'intégration de la base devront démontrer au minimum que :
 14. un événement à périodes multiples est trouvé dès qu'une période effective
     chevauche le filtre ;
 15. les événements passés restent présents mais sortent de la liste ordinaire ;
-16. un passage explicite en diffusion partielle retire la fiche des usages de
-    prospection sans la déclarer fermée ;
-17. deux demandes de collecte identiques ne créent qu'un travail actif et un
+16. une nouvelle période source ne remplace pas un ensemble de périodes
+    utilisateur courant et produit un signalement ;
+17. une qualité du fichier Sirene n'est jamais attribuée à une coordonnée API,
+    et la règle communale d'un kilomètre produit le même résultat à données
+    identiques ;
+18. démasquer un doublon efface aussi son lien vers la fiche conservée ;
+19. une observation en conflit d'identité reste en quarantaine, ne change pas
+    la fiche et rend le cycle partiel ;
+20. un passage explicite en diffusion partielle retire la fiche des usages de
+    prospection sans la déclarer fermée et purge toute copie identifiante hors
+    liste repoussoir juridiquement validée ;
+21. deux demandes de collecte identiques ne créent qu'un travail actif et un
     bail expiré peut être repris sans dupliquer une fiche ;
-18. l'état terminal du travail correspond au résultat final du cycle ;
-19. aucune migration ou observation ne contient un secret fournisseur.
+22. l'état terminal du travail correspond au résultat final du cycle ;
+23. aucune migration ou observation ne contient un secret fournisseur.
 
 ## 22. Décisions encore ouvertes
 
 Les points suivants ne bloquent pas la rédaction des autres documents, mais
 doivent être clos avant les migrations correspondantes :
 
-1. la liste exacte des champs à retirer, conserver ou transformer lorsqu'un
-   établissement ou son unité légale passe en diffusion partielle, y compris
-   l'autorisation éventuelle, la finalité et la durée d'une empreinte HMAC ;
-2. l'ordre définitif des sources de position Sirene après comparaison entre
-   les coordonnées de l'API 3.11, le fichier mensuel et le géocodeur ;
-3. les codes de qualité transformés en `USABLE` ou `TO_VERIFY` ;
-4. la règle d'identité d'édition DATAtourisme après vérification de la
-   réutilisation éventuelle des UUID ;
-5. le mapping réel des périodes et organisateurs DATAtourisme après le test
-   avec une clé API ;
-6. la politique de rétention à long terme des révisions et diagnostics de
+1. avant le début du jalon 6, la politique exacte de purge et de liste
+   repoussoir lorsqu'un établissement ou son unité légale passe en diffusion
+   partielle, y compris la base légale, la portée et la durée éventuelle d'une
+   empreinte HMAC ;
+2. la politique de rétention à long terme des révisions et diagnostics de
    pages, à fixer seulement après mesure de leur volume.
 
 Le modèle est volontairement indépendant des réponses à ces points : elles
