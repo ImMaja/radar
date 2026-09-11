@@ -1,8 +1,8 @@
 # Radar — Roadmap
 
-> Statut : jalons 0 et 1 terminés ; prochaine étape, jalon 2
+> Statut : jalons 0 à 3 terminés ; prochaine étape, jalon 4
 >
-> Dernière mise à jour : 8 septembre 2026
+> Dernière mise à jour : 11 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -47,12 +47,10 @@ Les clés sont configurées localement et ne sont jamais ajoutées au dépôt. E
 resteront également nécessaires dans les environnements qui exécutent les
 connecteurs, sous une forme secrète adaptée.
 
-Avant le jalon 3 et sa première interface utilisateur, il faudra également
-choisir le frontend. La recommandation initiale est une application
-TypeScript/React simple sans rendu serveur, car Radar est privé et n'a aucun
-besoin de référencement. Ce choix
-n'est pas bloquant pour les premières tranches backend et ne doit être figé
-qu'après un prototype minimal.
+Le jalon 3 a arrêté le frontend après son prototype minimal : TypeScript,
+React et Vite, avec un build statique servi sous la même origine que l'API.
+Radar étant privé et sans besoin de référencement, Next.js et un processus
+Node de production ne sont pas retenus.
 
 ## 4. Jalons du MVP
 
@@ -116,6 +114,8 @@ jalon 2.
 
 ### Jalon 2 — Socle applicatif minimal
 
+**État : terminé le 8 septembre 2026.**
+
 **But :** rendre le projet exécutable et testable sans fonctionnalité métier
 superflue.
 
@@ -133,6 +133,8 @@ Critère de sortie : une installation neuve peut lancer l'application et sa
 base, appliquer les migrations et exécuter tous les contrôles qualité.
 
 ### Jalon 3 — Accès privé
+
+**État : terminé le 11 septembre 2026.**
 
 **But :** protéger l'application avant d'y introduire des données métier.
 
@@ -354,9 +356,9 @@ de la base.
 
 Ces choix ne bloquent pas le cadrage actuel :
 
-| Décision | Échéance maximale | Recommandation actuelle |
+| Décision | Échéance maximale | Décision ou recommandation actuelle |
 | --- | --- | --- |
-| Frontend du MVP | Avant le jalon 3 | TypeScript, React et outil de build simple ; Next.js seulement si un besoin apparaît |
+| Frontend du MVP | Décidé le 11 septembre 2026 | TypeScript, React et Vite ; build statique sous la même origine, sans Next.js |
 | Processus de tâches longues | Début du jalon 5 | Même code applicatif, file durable en PostgreSQL, sans broker |
 | Serveur et mode de déploiement | Avant le jalon 11 | Un seul serveur privé, composants non publics sauf le proxy HTTPS |
 | Destination et capacité des sauvegardes | Avant le jalon 11 | Valider la rétention initiale de l'architecture et tester une restauration |

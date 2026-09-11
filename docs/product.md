@@ -2,7 +2,7 @@
 
 > Statut : cadrage produit validé
 >
-> Dernière mise à jour : 8 septembre 2026
+> Dernière mise à jour : 11 septembre 2026
 >
 > Périmètre initial : un utilisateur, un food truck, France métropolitaine,
 > application web privée
@@ -412,6 +412,9 @@ L'utilisateur peut :
 - Une session expirée ou invalide redirige vers la connexion.
 - L'utilisateur peut changer son mot de passe depuis les réglages en saisissant
   son mot de passe actuel, puis deux fois le nouveau.
+- Un nouveau mot de passe contient entre 15 et 128 caractères Unicode. Radar
+  n'impose pas de mélange artificiel de majuscules, chiffres ou symboles et
+  autorise les phrases de passe ainsi que le collage depuis un gestionnaire.
 - Un changement de mot de passe invalide les autres sessions encore ouvertes.
 - En cas d'oubli, le remplacement du mot de passe reste une procédure
   administrative côté serveur dans le MVP ; il ne nécessite ni adresse email

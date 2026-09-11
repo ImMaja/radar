@@ -1,0 +1,20 @@
+services:
+  database:
+    image: docker.io/postgis/postgis:18-3.6
+    environment:
+      POSTGRES_DB: radar
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: radar-local-only
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radar -d radar"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - radar_postgres_data:/var/lib/postgresql
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro,Z
+
+volumes:
+  radar_postgres_data:

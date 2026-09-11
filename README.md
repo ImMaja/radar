@@ -16,9 +16,11 @@ pas les fournisseurs externes.
 
 ## État du projet
 
-Le cadrage documentaire et la validation réelle des contrats externes autour
-de Dax sont terminés. Aucun code applicatif ni aucune infrastructure ne sont
-encore créés ; la prochaine étape est le socle applicatif minimal du jalon 2.
+Le cadrage, la validation réelle des contrats externes autour de Dax, le socle
+applicatif et l'accès privé sont terminés. Radar fournit une application
+FastAPI, une base PostgreSQL/PostGIS, des migrations Alembic et une interface
+React statique pour le compte unique. La prochaine tranche est l'adresse de
+référence et la recherche géographique locale du jalon 4.
 
 Le MVP est prévu pour un seul utilisateur et un seul food truck. Il sera
 accessible sur Internet derrière une authentification, sans exposer
@@ -40,7 +42,7 @@ le classifieur IA sont postérieurs au MVP.
 
 Radar restera un monolithe modulaire.
 
-Backend prévu :
+Backend :
 
 - Python et FastAPI ;
 - PostgreSQL et PostGIS ;
@@ -48,9 +50,9 @@ Backend prévu :
 - Pydantic ;
 - httpx.
 
-Le frontend sera choisi avant la première tranche d'interface. La préférence
-actuelle est TypeScript avec React, sans imposer Next.js tant qu'aucun besoin
-de rendu serveur ne le justifie.
+Le frontend utilise TypeScript, React et Vite. Son build est statique et servi
+sous la même origine que l'API ; Radar n'ajoute ni Next.js ni processus Node en
+production.
 
 ## Documentation
 
@@ -78,9 +80,76 @@ solution.
 
 ## Démarrage
 
-Il n'existe pas encore de commande d'installation ou de lancement. Elles
-seront ajoutées avec le premier socle exécutable, sans documenter par avance
-des commandes qui n'existent pas.
+Prérequis :
+
+- Python 3.13 ou 3.14 ;
+- Node.js 22.12 ou plus récent pour construire et tester l'interface ;
+- Docker avec le plugin Compose, ou Podman avec un fournisseur Compose.
+
+Depuis la racine du dépôt :
+
+```bash
+cp -n .env.example .env.local
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.lock
+.venv/bin/python -m pip install --no-deps -e .
+docker compose up -d database
+.venv/bin/python -m alembic upgrade head
+npm ci --prefix frontend
+npm run build --prefix frontend
+.venv/bin/radar-admin create-account --display-name "Food truck Radar"
+.venv/bin/python -m uvicorn radar.main:app --reload
+```
+
+La commande de création demande deux fois le mot de passe de manière
+interactive et refuse de remplacer un compte existant. En cas d'oubli :
+
+```bash
+.venv/bin/radar-admin reset-password
+```
+
+Cette seconde commande révoque toutes les sessions existantes. Aucun mot de
+passe n'est accepté en argument ou variable d'environnement.
+
+Avec Podman Compose, remplacer `docker compose` par `podman compose`.
+L'application répond ensuite sur `http://127.0.0.1:8000`. Les contrôles
+`/health/live` et `/health/ready` vérifient respectivement le processus et la
+base avec son schéma. La documentation interactive est disponible sur
+`/docs` hors production.
+
+Le port PostgreSQL local est lié uniquement à `127.0.0.1`. Les identifiants
+du fichier Compose sont réservés au développement et ne doivent jamais être
+réutilisés en production.
+
+Si `.env.local` existe déjà, ne pas l'écraser : y ajouter seulement les
+variables manquantes présentes dans `.env.example`.
+
+## Contrôles qualité
+
+La suite rapide ne nécessite pas de base :
+
+```bash
+.venv/bin/python -m ruff format --check .
+.venv/bin/python -m ruff check .
+.venv/bin/python -m mypy
+.venv/bin/python -m pytest -m "not integration"
+npm run check --prefix frontend
+npm test --prefix frontend
+npm run build --prefix frontend
+```
+
+Le test de migration repart de zéro sur la base dédiée `radar_test`. Il refuse
+explicitement toute autre base :
+
+```bash
+RADAR_TEST_DATABASE_URL=postgresql+psycopg://radar:radar-local-only@127.0.0.1:5432/radar_test \
+  .venv/bin/python -m pytest tests/integration
+```
+
+Pour travailler avec le rechargement à chaud du frontend, démarrer FastAPI en
+configurant `RADAR_PUBLIC_ORIGIN=http://127.0.0.1:5173`, puis exécuter
+`npm run dev --prefix frontend`. Vite relaie les appels locaux vers FastAPI ;
+le navigateur reste sur une origine unique.
 
 Avant toute contribution, lire `AGENTS.md` puis les documents concernés par la
 modification.

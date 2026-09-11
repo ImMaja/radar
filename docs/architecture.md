@@ -2,7 +2,7 @@
 
 > Statut : cadrage technique du MVP
 >
-> Dernière mise à jour : 8 septembre 2026
+> Dernière mise à jour : 11 septembre 2026
 >
 > Périmètre : monolithe modulaire déployé sur un serveur privé
 
@@ -219,15 +219,17 @@ publique ne contient ni trace, ni secret, ni corps fournisseur.
 
 ### 5.2 Choix du frontend
 
-Le contrat précédent ne dépend pas d'un framework d'interface. Le frontend
-peut être une application TypeScript légère, React compris, ou une interface
-rendue plus simplement si cela suffit au MVP.
+Le choix du MVP est arrêté au 11 septembre 2026 : TypeScript, React et Vite.
+Vite produit des fichiers statiques servis sous la même origine que l'API par
+le backend ou le reverse proxy. Node n'est donc nécessaire que pour développer
+et construire l'interface, pas comme processus de production. Next.js n'est
+pas retenu : Radar n'a ni besoin de référencement public ni besoin constaté de
+rendu côté serveur.
 
-La solution par défaut la plus simple est un build statique servi sous la même
-origine que l'API. Next.js et un processus Node en production ne sont utiles
-que si une fonction réellement retenue exige son rendu serveur. Radar n'a pas
-de besoin de référencement public et ne doit pas ajouter ce processus par
-principe.
+En développement, le serveur Vite relaie `/api` et `/health` vers FastAPI. Son
+origine devient temporairement l'origine publique configurée. Un build local
+peut également être servi directement par FastAPI pour reproduire le modèle à
+origine unique sans CORS.
 
 Quel que soit le choix :
 
@@ -263,6 +265,12 @@ calibrés sur le matériel de production pour obtenir un coût défensif sans
 rendre la connexion indisponible. Ils ne sont donc pas figés avant cette
 mesure. Une connexion réussie peut mettre à niveau un condensat créé avec des
 paramètres devenus insuffisants.
+
+Le profil initial utilise 19 MiB de mémoire, deux itérations et un degré de
+parallélisme, soit le minimum Argon2id OWASP validé lors du jalon 3. Il reste à
+mesurer sur le serveur final avant la mise en production. Radar accepte les
+phrases de passe Unicode de 15 à 128 caractères, sans règle de composition, et
+ne les tronque jamais.
 
 Le mot de passe en clair n'est jamais conservé, journalisé ou placé dans une
 variable d'environnement. Les comparaisons et primitives cryptographiques
@@ -321,6 +329,12 @@ Les tentatives de connexion sont limitées par adresse cliente au point
 d'entrée Internet. La configuration initiale autorise un petit burst puis au
 plus cinq tentatives par minute. L'application ne fait confiance aux en-têtes
 d'adresse transmis que par son reverse proxy connu.
+
+Le backend applique également cette limite en mémoire à l'adresse de son pair
+direct. Cette défense protège le processus unique du MVP et ne lit aucun
+en-tête client déclaratif. Lors du déploiement, le reverse proxy applique la
+même politique à l'adresse Internet réelle ; cette limite périphérique reste
+nécessaire si plusieurs processus web sont lancés.
 
 Un échec est journalisé comme événement de sécurité sans inclure le mot de
 passe. Une limite globale complémentaire et un délai progressif peuvent être
@@ -1136,13 +1150,11 @@ doivent être résolus avant leur lot d'implémentation :
 2. avant le début du jalon 6, règles exactes de purge et de conservation d'une
    HMAC lors d'un passage Sirene en diffusion partielle, après validation de
    conformité ;
-3. framework frontend final et mode de service de ses fichiers, en privilégiant
-   une solution statique sous la même origine ;
-4. mécanisme d'exploitation choisi sur le serveur réel, `systemd` ou
+3. mécanisme d'exploitation choisi sur le serveur réel, `systemd` ou
    composition de conteneurs simple ;
-5. paramètres Argon2id et durées définitives de session après mesure sur le
+4. paramètres Argon2id et durées définitives de session après mesure sur le
    matériel et validation de l'ergonomie ;
-6. paramètres du pool SQLAlchemy et limites de ressources après la première
+5. paramètres du pool SQLAlchemy et limites de ressources après la première
    collecte implémentée.
 
 Ces décisions doivent être consignées avant le code correspondant. Elles ne
