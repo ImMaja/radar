@@ -1,8 +1,8 @@
 # Radar — Roadmap
 
-> Statut : jalons 0 à 3 terminés ; prochaine étape, jalon 4
+> Statut : jalons 0 à 4 terminés ; prochaine étape, jalon 5
 >
-> Dernière mise à jour : 11 septembre 2026
+> Dernière mise à jour : 19 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -155,6 +155,8 @@ testés, notamment l'absence d'accès anonyme et l'invalidation des sessions.
 
 ### Jalon 4 — Adresse de référence et recherche géographique locale
 
+**État : terminé le 19 septembre 2026.**
+
 **But :** établir le centre commun aux futures collectes et recherches.
 
 Travaux :
@@ -169,6 +171,18 @@ Travaux :
 
 Critère de sortie : un rayon de recherche peut changer sans appel externe et
 un dépassement de couverture produit l'avertissement prévu.
+
+Résultat : le géocodeur officiel de la Géoplateforme est isolé derrière un
+adaptateur et ne propose que des résultats d'adresse situés en France
+métropolitaine. Le résultat est conservé comme candidat inactif, présenté avec
+son libellé, ses coordonnées, son score et sa provenance, puis devient la
+position courante uniquement après confirmation explicite. Les anciennes
+positions restent historiques. Les rayons de collecte et de recherche sont
+modifiables séparément de 1 mètre à 50 kilomètres sans appel externe ni
+création de collecte. En l'absence de cycle réussi, l'interface indique
+explicitement qu'aucune couverture Sirene ou DATAtourisme n'est encore
+établie. La migration et les requêtes `ST_DWithin`/`ST_Distance` ont été
+validées sur PostgreSQL/PostGIS avec des points locaux autour de Dax.
 
 ### Jalon 5 — Exécution durable des collectes
 

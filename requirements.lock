@@ -1,4 +1,4 @@
-# Generated for the Jalon 2 development and test environment.
+# Pinned runtime and development environment for Radar.
 # Update deliberately after changing dependencies in pyproject.toml.
 alembic==1.19.2
 annotated-doc==0.0.5

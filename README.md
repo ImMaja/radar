@@ -17,10 +17,12 @@ pas les fournisseurs externes.
 ## État du projet
 
 Le cadrage, la validation réelle des contrats externes autour de Dax, le socle
-applicatif et l'accès privé sont terminés. Radar fournit une application
-FastAPI, une base PostgreSQL/PostGIS, des migrations Alembic et une interface
-React statique pour le compte unique. La prochaine tranche est l'adresse de
-référence et la recherche géographique locale du jalon 4.
+applicatif, l'accès privé et le réglage géographique sont terminés. Radar
+fournit une application FastAPI, une base PostgreSQL/PostGIS, des migrations
+Alembic et une interface React statique pour le compte unique. L'utilisateur
+peut géocoder puis confirmer une adresse de France métropolitaine et régler
+séparément les rayons de collecte et de recherche jusqu'à 50 km. La prochaine
+tranche est l'exécution durable des collectes du jalon 5.
 
 Le MVP est prévu pour un seul utilisateur et un seul food truck. Il sera
 accessible sur Internet derrière une authentification, sans exposer

@@ -12,10 +12,15 @@ from radar.auth.contracts import AuthenticationBackend
 from radar.auth.rate_limit import LoginRateLimiter
 from radar.auth.service import AuthService
 from radar.config import Settings, get_settings
+from radar.geography.contracts import GeographyBackend
+from radar.geography.service import GeographyService
 from radar.persistence.auth import SqlAlchemyAuthRepository
 from radar.persistence.database import Database
+from radar.persistence.geography import SqlAlchemyGeographyRepository
+from radar.providers.geoplatform import GeoPlatformGeocoder
 from radar.web.auth import router as auth_router
 from radar.web.errors import ApiProblem, api_problem_handler, request_validation_handler
+from radar.web.geography import router as geography_router
 from radar.web.health import ReadinessProbe
 from radar.web.health import router as health_router
 from radar.web.middleware import add_security_headers
@@ -26,15 +31,17 @@ def create_app(
     readiness_probe: ReadinessProbe | None = None,
     authentication_backend: AuthenticationBackend | None = None,
     login_rate_limiter: LoginRateLimiter | None = None,
+    geography_backend: GeographyBackend | None = None,
 ) -> FastAPI:
     """Build one Radar web process with explicit dependencies."""
 
     resolved_settings = settings or get_settings()
     owned_database = (
         Database(resolved_settings.database_url)
-        if readiness_probe is None or authentication_backend is None
+        if (readiness_probe is None or authentication_backend is None or geography_backend is None)
         else None
     )
+    owned_geocoder: GeoPlatformGeocoder | None = None
 
     if readiness_probe is None:
         assert owned_database is not None
@@ -46,12 +53,21 @@ def create_app(
             idle_timeout=timedelta(seconds=resolved_settings.session_idle_seconds),
             absolute_timeout=timedelta(seconds=resolved_settings.session_absolute_seconds),
         )
+    if geography_backend is None:
+        assert owned_database is not None
+        owned_geocoder = GeoPlatformGeocoder()
+        geography_backend = GeographyService(
+            SqlAlchemyGeographyRepository(owned_database.engine),
+            owned_geocoder,
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
             yield
         finally:
+            if owned_geocoder is not None:
+                owned_geocoder.close()
             if owned_database is not None:
                 owned_database.close()
 
@@ -71,8 +87,10 @@ def create_app(
     app.state.readiness_probe = readiness_probe
     app.state.authentication_backend = authentication_backend
     app.state.login_rate_limiter = login_rate_limiter or LoginRateLimiter()
+    app.state.geography_backend = geography_backend
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(geography_router)
     if resolved_settings.frontend_directory.joinpath("index.html").is_file():
         app.mount(
             "/",

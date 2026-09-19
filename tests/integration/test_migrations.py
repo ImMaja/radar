@@ -10,7 +10,7 @@ from radar.persistence.schema import EXPECTED_SCHEMA_REVISION
 pytestmark = pytest.mark.integration
 
 
-def test_migrations_enable_postgis_and_authentication(
+def test_migrations_enable_postgis_authentication_and_geographic_settings(
     integration_database_url: str,
 ) -> None:
     database_url = integration_database_url
@@ -27,7 +27,8 @@ def test_migrations_enable_postgis_and_authentication(
                 connection.execute(
                     text(
                         "SELECT tablename FROM pg_tables "
-                        "WHERE schemaname = 'public' AND tablename IN ('account', 'auth_session')"
+                        "WHERE schemaname = 'public' AND tablename IN "
+                        "('account', 'auth_session', 'reference_position', 'application_setting')"
                     )
                 ).scalars()
             )
@@ -36,7 +37,12 @@ def test_migrations_enable_postgis_and_authentication(
 
     assert has_postgis is True
     assert revision == EXPECTED_SCHEMA_REVISION
-    assert tables == {"account", "auth_session"}
+    assert tables == {
+        "account",
+        "auth_session",
+        "reference_position",
+        "application_setting",
+    }
 
     database = Database(SecretStr(database_url))
     try:

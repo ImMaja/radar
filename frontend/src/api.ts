@@ -3,6 +3,45 @@ export interface SessionView {
   display_name: string | null;
 }
 
+export interface StructuredAddressView {
+  house_number: string | null;
+  street: string | null;
+  postcode: string | null;
+  city: string | null;
+  context: string | null;
+}
+
+export interface ReferencePositionView {
+  id: string;
+  input_address: string;
+  normalized_label: string;
+  structured_address: StructuredAddressView;
+  longitude: number;
+  latitude: number;
+  municipality_code: string;
+  ban_id: string | null;
+  result_type: string | null;
+  score: number | null;
+  provider_name: string;
+  provider_url: string;
+  geocoded_at: string;
+  confirmed_at: string | null;
+}
+
+export interface ConnectorCoverageView {
+  connector: "SIRENE" | "DATATOURISME";
+  status: "NOT_COLLECTED";
+  search_circle_covered: false;
+}
+
+export interface GeographySettingsView {
+  reference_position: ReferencePositionView | null;
+  collection_radius_meters: number;
+  search_radius_meters: number;
+  updated_at: string;
+  coverage: ConnectorCoverageView[];
+}
+
 interface ErrorBody {
   code?: string;
   message?: string;
@@ -100,6 +139,37 @@ export function changePassword(
       current_password: currentPassword,
       new_password: newPassword,
       confirmation,
+    }),
+  );
+}
+
+export function getGeographySettings(): Promise<GeographySettingsView> {
+  return request<GeographySettingsView>("/api/v1/settings/geography");
+}
+
+export function geocodeReferenceAddress(address: string): Promise<ReferencePositionView> {
+  return request<ReferencePositionView>(
+    "/api/v1/settings/geography/geocodings",
+    jsonMutation("POST", { address }),
+  );
+}
+
+export function confirmReferencePosition(candidateId: string): Promise<GeographySettingsView> {
+  return request<GeographySettingsView>(
+    "/api/v1/settings/geography/reference-position",
+    jsonMutation("POST", { candidate_id: candidateId }),
+  );
+}
+
+export function updateGeographyRadii(
+  collectionRadiusMeters: number,
+  searchRadiusMeters: number,
+): Promise<GeographySettingsView> {
+  return request<GeographySettingsView>(
+    "/api/v1/settings/geography/radii",
+    jsonMutation("PATCH", {
+      collection_radius_meters: collectionRadiusMeters,
+      search_radius_meters: searchRadiusMeters,
     }),
   );
 }
