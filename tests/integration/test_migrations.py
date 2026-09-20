@@ -10,7 +10,7 @@ from radar.persistence.schema import EXPECTED_SCHEMA_REVISION
 pytestmark = pytest.mark.integration
 
 
-def test_migrations_enable_postgis_authentication_and_geographic_settings(
+def test_migrations_enable_postgis_and_create_the_current_schema(
     integration_database_url: str,
 ) -> None:
     database_url = integration_database_url
@@ -28,7 +28,17 @@ def test_migrations_enable_postgis_authentication_and_geographic_settings(
                     text(
                         "SELECT tablename FROM pg_tables "
                         "WHERE schemaname = 'public' AND tablename IN "
-                        "('account', 'auth_session', 'reference_position', 'application_setting')"
+                        "('account', 'auth_session', 'reference_position', 'application_setting', "
+                        "'collection_cycle', 'collection_job', 'collection_attempt', "
+                        "'connector_coverage', 'dataset_release', 'commune_boundary')"
+                    )
+                ).scalars()
+            )
+            municipality_indexes = set(
+                connection.execute(
+                    text(
+                        "SELECT indexname FROM pg_indexes "
+                        "WHERE schemaname = 'public' AND tablename = 'commune_boundary'"
                     )
                 ).scalars()
             )
@@ -42,7 +52,15 @@ def test_migrations_enable_postgis_authentication_and_geographic_settings(
         "auth_session",
         "reference_position",
         "application_setting",
+        "collection_cycle",
+        "collection_job",
+        "collection_attempt",
+        "connector_coverage",
+        "dataset_release",
+        "commune_boundary",
     }
+    assert "ix_commune_boundary_boundary" in municipality_indexes
+    assert "ix_commune_boundary_boundary_geography" in municipality_indexes
 
     database = Database(SecretStr(database_url))
     try:

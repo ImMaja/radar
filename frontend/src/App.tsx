@@ -2,15 +2,20 @@ import { type FormEvent, useEffect, useState } from "react";
 
 import {
   ApiError,
+  type CollectionDashboardView,
+  type CollectionJobState,
+  type Connector,
   changePassword,
   confirmReferencePosition,
   type GeographySettingsView,
   geocodeReferenceAddress,
+  getCollectionDashboard,
   getGeographySettings,
   getSession,
   logIn,
   logOut,
   type ReferencePositionView,
+  requestManualCollection,
   type SessionView,
   updateGeographyRadii,
 } from "./api";
@@ -24,10 +29,28 @@ function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "Une erreur inattendue est survenue.";
 }
 
+const stateLabels: Record<CollectionJobState, string> = {
+  WAITING: "En attente",
+  RUNNING: "En cours",
+  WAITING_RETRY: "Reprise planifiée",
+  SUCCEEDED: "Réussie",
+  PARTIAL: "Partielle",
+  FAILED: "Échouée",
+};
+
+function formatDate(value: string | null): string {
+  if (value === null) return "Jamais";
+  return new Intl.DateTimeFormat("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
 export function App() {
   const [state, setState] = useState<AppState>({ phase: "loading" });
   const [message, setMessage] = useState<string | null>(null);
   const [geography, setGeography] = useState<GeographySettingsView | null>(null);
+  const [collections, setCollections] = useState<CollectionDashboardView | null>(null);
   const [candidate, setCandidate] = useState<ReferencePositionView | null>(null);
   const [geographyBusy, setGeographyBusy] = useState(false);
 
@@ -38,8 +61,14 @@ export function App() {
         if (!active) return;
         setState({ phase: "authenticated", session });
         try {
-          const settings = await getGeographySettings();
-          if (active) setGeography(settings);
+          const [settings, collectionDashboard] = await Promise.all([
+            getGeographySettings(),
+            getCollectionDashboard(),
+          ]);
+          if (active) {
+            setGeography(settings);
+            setCollections(collectionDashboard);
+          }
         } catch (error) {
           if (!active) return;
           if (error instanceof ApiError && error.status === 401) {
@@ -63,6 +92,21 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (
+      state.phase !== "authenticated" ||
+      !collections?.connectors.some((connector) => connector.active_job !== null)
+    ) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      getCollectionDashboard()
+        .then(setCollections)
+        .catch((error: unknown) => setMessage(errorMessage(error)));
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [collections, state.phase]);
+
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage(null);
@@ -72,7 +116,12 @@ export function App() {
       const session = await logIn(String(form.get("password") ?? ""));
       formElement.reset();
       setState({ phase: "authenticated", session });
-      setGeography(await getGeographySettings());
+      const [settings, collectionDashboard] = await Promise.all([
+        getGeographySettings(),
+        getCollectionDashboard(),
+      ]);
+      setGeography(settings);
+      setCollections(collectionDashboard);
     } catch (error) {
       setMessage(errorMessage(error));
     }
@@ -106,6 +155,7 @@ export function App() {
       await logOut();
       setState({ phase: "anonymous" });
       setGeography(null);
+      setCollections(null);
       setCandidate(null);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -136,7 +186,9 @@ export function App() {
     setMessage(null);
     setGeographyBusy(true);
     try {
-      setGeography(await confirmReferencePosition(candidate.id));
+      const confirmed = await confirmReferencePosition(candidate.id);
+      setGeography(confirmed);
+      setCollections(await getCollectionDashboard());
       setCandidate(null);
       setMessage("L'adresse de référence est confirmée. Aucune collecte n'a été lancée.");
     } catch (error) {
@@ -154,13 +206,31 @@ export function App() {
     const collectionKilometers = Number(form.get("collectionRadius"));
     const searchKilometers = Number(form.get("searchRadius"));
     try {
-      setGeography(
-        await updateGeographyRadii(
-          Math.round(collectionKilometers * 1000),
-          Math.round(searchKilometers * 1000),
-        ),
+      const updated = await updateGeographyRadii(
+        Math.round(collectionKilometers * 1000),
+        Math.round(searchKilometers * 1000),
       );
+      setGeography(updated);
+      setCollections(await getCollectionDashboard());
       setMessage("Les rayons ont été enregistrés sans nouvelle collecte.");
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setGeographyBusy(false);
+    }
+  }
+
+  async function startCollection(connector: Connector) {
+    setMessage(null);
+    setGeographyBusy(true);
+    try {
+      const enqueued = await requestManualCollection(connector);
+      setCollections(await getCollectionDashboard());
+      setMessage(
+        enqueued.created
+          ? `La collecte ${connector} a été placée en attente.`
+          : `Une collecte ${connector} identique est déjà active.`,
+      );
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -342,18 +412,84 @@ export function App() {
                     </button>
                   </form>
 
-                  {geography.reference_position ? (
-                    <p className="coverage-warning" role="status">
-                      Aucune collecte réussie ne couvre encore cette zone. Les futures données ne
-                      seront considérées comme complètes qu’après une collecte réussie pour chaque
-                      source.
-                    </p>
-                  ) : (
+                  {!geography.reference_position && (
                     <p className="coverage-warning" role="status">
                       Confirmez d’abord une adresse pour définir le centre des futures collectes.
                     </p>
                   )}
                 </>
+              )}
+            </section>
+
+            <section className="panel" aria-labelledby="collections-title">
+              <p className="section-label">Synchronisation</p>
+              <h2 id="collections-title">Collectes</h2>
+              <p className="hint">
+                Chaque source travaille en arrière-plan sur une copie du centre et du rayon actuels.
+              </p>
+              {collections === null ? (
+                <p className="loading">Chargement de l’état des collectes…</p>
+              ) : (
+                <div className="connector-list">
+                  {collections.connectors.map((connector) => {
+                    const job = connector.active_job ?? connector.latest_job;
+                    return (
+                      <article className="connector-card" key={connector.connector}>
+                        <div className="connector-heading">
+                          <h3>{connector.connector === "SIRENE" ? "Sirene" : "DATAtourisme"}</h3>
+                          <span className={`status status-${job?.state.toLowerCase() ?? "empty"}`}>
+                            {job ? stateLabels[job.state] : "Jamais collectée"}
+                          </span>
+                        </div>
+                        <dl>
+                          <div>
+                            <dt>Dernier succès</dt>
+                            <dd>{formatDate(connector.last_success_at)}</dd>
+                          </div>
+                          <div>
+                            <dt>Couverture</dt>
+                            <dd>
+                              {connector.coverage === null
+                                ? "Non établie"
+                                : connector.coverage.search_circle_covered
+                                  ? "Recherche couverte"
+                                  : "Zone actuelle non couverte"}
+                            </dd>
+                          </div>
+                          {job && (
+                            <>
+                              <div>
+                                <dt>Étape</dt>
+                                <dd>{job.progress.stage}</dd>
+                              </div>
+                              <div>
+                                <dt>Tentatives</dt>
+                                <dd>
+                                  {job.attempt_count} / {job.max_attempts}
+                                </dd>
+                              </div>
+                            </>
+                          )}
+                        </dl>
+                        {job?.last_error && (
+                          <p className="collection-error">{job.last_error.message}</p>
+                        )}
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={
+                            geographyBusy ||
+                            !connector.available ||
+                            geography?.reference_position === null
+                          }
+                          onClick={() => startCollection(connector.connector)}
+                        >
+                          {connector.available ? "Actualiser maintenant" : "Connecteur à venir"}
+                        </button>
+                      </article>
+                    );
+                  })}
+                </div>
               )}
             </section>
 

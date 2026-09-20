@@ -246,6 +246,86 @@ button.secondary {
   line-height: 1.5;
 }
 
+.connector-list {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.connector-card {
+  padding: 1rem;
+  border: 1px solid rgb(23 53 45 / 14%);
+  border-radius: 0.9rem;
+  background: #fffefb;
+}
+
+.connector-heading {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.connector-heading h3 {
+  margin: 0;
+  font-family: Georgia, serif;
+}
+
+.status {
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  color: #55655e;
+  background: #edf0eb;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.status-running,
+.status-waiting,
+.status-waiting_retry {
+  color: #665637;
+  background: #fff0c9;
+}
+
+.status-succeeded {
+  color: #285441;
+  background: #dcefe4;
+}
+
+.status-partial,
+.status-failed {
+  color: #813f2d;
+  background: #f9ded5;
+}
+
+.connector-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin: 1rem 0 0;
+}
+
+.connector-card dt {
+  color: #66736d;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.connector-card dd {
+  margin: 0.2rem 0 0;
+}
+
+.connector-card button {
+  width: 100%;
+}
+
+.collection-error {
+  margin: 1rem 0 0;
+  color: #813f2d;
+  line-height: 1.45;
+}
+
 .notice {
   max-width: 44rem;
   margin-bottom: 1.5rem;
@@ -274,7 +354,8 @@ button.secondary {
   }
 
   .field-pair,
-  .candidate dl {
+  .candidate dl,
+  .connector-card dl {
     grid-template-columns: 1fr;
   }
 

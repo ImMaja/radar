@@ -1,8 +1,8 @@
 # Radar — Roadmap
 
-> Statut : jalons 0 à 4 terminés ; prochaine étape, jalon 5
+> Statut : jalons 0 à 5 terminés ; prochaine étape, jalon 6
 >
-> Dernière mise à jour : 19 septembre 2026
+> Dernière mise à jour : 20 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -186,6 +186,8 @@ validées sur PostgreSQL/PostGIS avec des points locaux autour de Dax.
 
 ### Jalon 5 — Exécution durable des collectes
 
+**État : terminé le 20 septembre 2026.**
+
 **But :** disposer d'un mécanisme commun avant d'ajouter les fournisseurs.
 
 Travaux :
@@ -201,7 +203,24 @@ Travaux :
 Critère de sortie : une tâche factice contrôlée peut réussir, échouer puis être
 relancée sans être présentée à tort comme une couverture complète.
 
+Résultat : la file PostgreSQL conserve séparément le travail, son cycle et
+chaque tentative. Les réservations utilisent un bail et `FOR UPDATE SKIP
+LOCKED` ; un bail expiré conserve la tentative abandonnée et reprend depuis le
+dernier point explicitement sûr. Une empreinte et un index partiel empêchent
+deux demandes identiques actives, tandis que le centre et le rayon restent
+figés dans chaque cycle. L'API privée et l'interface affichent l'étape, les
+tentatives, l'erreur, le dernier succès et la couverture. Les scénarios
+contrôlés sur PostgreSQL/PostGIS couvrent réussite, résultat partiel, erreur,
+reprise différée, relance et récupération après crash. Seul un résultat
+entièrement réussi crée une couverture ; les résultats partiels et échoués ne
+la font jamais avancer. Le processus worker est séparé du serveur HTTP et les
+adaptateurs restent injectables. Les boutons des connecteurs demeurent
+désactivés tant que leurs implémentations réelles ne sont pas enregistrées aux
+jalons 6 et 7, afin de ne pas créer de travaux impossibles à exécuter.
+
 ### Jalon 6 — Prospects Sirene de bout en bout
+
+**État : en cours depuis le 20 septembre 2026.**
 
 **But :** livrer la première boucle métier réellement utilisable.
 
@@ -234,6 +253,42 @@ Interface minimale :
 
 Critère de sortie : le connecteur satisfait ses critères de complétude autour
 de Dax et une relance met à jour les mêmes SIRET sans créer de doublons.
+
+Avancement : le premier incrément isole l'API Sirene 3.11 derrière un
+adaptateur de lecture typé. Il construit le filtre courant validé, refuse les
+lots de plus de 30 communes ou non disjoints, suit le curseur opaque jusqu'à
+la page terminale vide et réconcilie le total annoncé, le nombre reçu et les
+SIRET uniques. Les appels sont espacés pour respecter 30 requêtes par minute ;
+les erreurs temporaires ont quatre tentatives HTTP bornées et les délais longs
+restent destinés à la reprise durable du worker. La clé est envoyée uniquement
+dans l'en-tête prévu. Les réponses sont limitées aux champs utiles, les noms
+personnels d'entrepreneurs individuels ne sont pas demandés, et les statuts
+courants sont revérifiés avant de produire un candidat. Les pages ne publient
+qu'une empreinte du curseur suivant et une reprise après interruption devra
+recommencer le lot depuis son début. Les fixtures couvrent page terminale,
+comptages, doublons, boucle de curseur, fermeture concurrente, quotas, contrat
+et métadonnées de fraîcheur. Un appel réel borné à une ligne a confirmé le
+20 septembre 2026 que la liste explicite de champs reste acceptée et conforme
+au schéma attendu, sans conserver la donnée reçue.
+
+Le deuxième incrément charge le GeoJSON officiel de contours dans des versions
+immuables `dataset_release` et `commune_boundary`. La commande d'administration
+contrôle taille, SHA-256, contrat GeoJSON, unicité des codes et périmètre
+métropolitain, puis PostGIS valide les contours dans une table temporaire avant
+un basculement atomique. Les topologies sources invalides sont réparées et
+comptabilisées ; un résultat vide ou invalide annule le chargement. Deux index
+GiST permettent la sélection géodésique par `ST_DWithin` avec la marge fixe de
+1 km. Le vrai fichier 2026 a chargé 34 791 communes, réparé 16 contours hors de
+la zone de Dax et reproduit les 418 communes candidates attendues. Les tests
+couvrent aussi l'idempotence, le remplacement de version et l'échec sans perte
+de la version active.
+
+Restent notamment à réaliser avant la sortie du jalon : persister les
+lots/pages/observations, traiter le fichier géographique mensuel, résoudre les
+positions, importer les prospects
+et leur provenance, fournir les listes et filtres, puis fermer la décision de
+conformité sur la diffusion partielle. Le connecteur reste donc désactivé dans
+l'interface et le worker de production.
 
 ### Jalon 7 — Événements DATAtourisme de bout en bout
 

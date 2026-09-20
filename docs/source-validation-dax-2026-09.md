@@ -76,6 +76,14 @@ a été contrôlé :
 - 34 768 géométries `Polygon` et 246 `MultiPolygon` ;
 - aucune géométrie invalide parmi les candidates examinées.
 
+Le chargement PostGIS exhaustif réalisé le 20 septembre 2026 a précisé ce
+dernier point : 16 contours invalides existent dans le fichier complet, mais
+aucun dans la sélection autour de Dax. Radar en charge 34 791 pour la France
+métropolitaine, répare ces 16 topologies avec `ST_MakeValid`, enregistre ce
+compteur dans la provenance et revérifie chaque résultat. Le contrôle réel de
+la requête géodésique `ST_DWithin` retrouve les 418 candidates attendues ; un
+tampon polygonal approximatif n'en retrouvait que 417 et n'est donc pas utilisé.
+
 Le cercle exact intersecte 405 communes : 224 dans les Landes et 181 dans les
 Pyrénées-Atlantiques. La présélection élargie de 1 km en retient 418 : 228
 dans les Landes et 190 dans les Pyrénées-Atlantiques. Ces communes sont des

@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 radar-admin = "radar.cli:main"
+radar-worker = "radar.worker:main"
 
 [project.optional-dependencies]
 dev = [

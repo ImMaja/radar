@@ -14,9 +14,9 @@ from radar.config import get_settings
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def integration_database_url() -> Iterator[str]:
-    """Rebuild only the explicitly named disposable integration database."""
+    """Rebuild the explicitly named disposable database for every integration test."""
 
     database_url = os.getenv("RADAR_TEST_DATABASE_URL")
     if database_url is None:

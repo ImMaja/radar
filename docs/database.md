@@ -136,7 +136,9 @@ rayon en mètres et [`ST_Distance`](https://postgis.net/docs/ST_Distance.html)
 pour une distance géodésique en mètres, avec l'index spatial PostGIS.
 
 Les contours de communes utilisent des `geometry(MultiPolygon, 4326)`
-versionnées.
+versionnées. Un index GiST porte aussi sur leur projection `geography` afin
+que la présélection par `ST_DWithin` reste géodésique, indexable et exprimée en
+mètres.
 Ils servent seulement à présélectionner les communes ; la décision finale
 d'inclusion utilise le point de l'opportunité et le cercle exact.
 
@@ -897,9 +899,17 @@ Chaque ligne contient :
 - contour `geometry(MultiPolygon, 4326)` ;
 - indicateur France métropolitaine.
 
-La clé est la paire version-code commune. Un index GiST porte sur le contour.
-Les changements de code ou de contour créent de nouvelles lignes dans une
-nouvelle version ; ils ne réécrivent pas les cycles passés.
+La clé est la paire version-code commune. Des index GiST portent sur le
+contour et son expression `geography`. Les changements de code ou de contour
+créent de nouvelles lignes dans une nouvelle version ; ils ne réécrivent pas
+les cycles passés.
+
+Le chargement passe par une table temporaire. Une géométrie source invalide
+est réparée de façon déterministe avec PostGIS, extraite en multipolygone puis
+revérifiée ; le nombre de réparations est inscrit dans les métadonnées de la
+version. Une réparation vide, une géométrie finale invalide ou située hors des
+bornes WGS84 annule toute la transaction et ne remplace jamais la version
+active.
 
 ### 14.3 Référentiels métier
 

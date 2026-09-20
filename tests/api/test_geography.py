@@ -155,18 +155,6 @@ def test_geography_settings_are_private_and_start_without_coverage() -> None:
     assert current.json()["reference_position"] is None
     assert current.json()["collection_radius_meters"] == 50_000
     assert current.json()["search_radius_meters"] == 50_000
-    assert current.json()["coverage"] == [
-        {
-            "connector": "SIRENE",
-            "status": "NOT_COLLECTED",
-            "search_circle_covered": False,
-        },
-        {
-            "connector": "DATATOURISME",
-            "status": "NOT_COLLECTED",
-            "search_circle_covered": False,
-        },
-    ]
 
 
 def test_geocode_then_confirm_keeps_the_two_actions_distinct() -> None:

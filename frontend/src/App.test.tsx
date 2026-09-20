@@ -9,10 +9,6 @@ const geography = {
   collection_radius_meters: 50_000,
   search_radius_meters: 50_000,
   updated_at: "2026-09-19T12:00:00Z",
-  coverage: [
-    { connector: "SIRENE", status: "NOT_COLLECTED", search_circle_covered: false },
-    { connector: "DATATOURISME", status: "NOT_COLLECTED", search_circle_covered: false },
-  ],
 };
 const candidate = {
   id: "a81516f3-4d34-4d45-a9b6-3240e2143936",
@@ -35,6 +31,46 @@ const candidate = {
   provider_url: "https://data.geopf.fr/geocodage/search",
   geocoded_at: "2026-09-19T12:00:00Z",
   confirmed_at: null,
+};
+const collections = {
+  connectors: [
+    {
+      connector: "SIRENE",
+      available: true,
+      active_job: null,
+      latest_job: null,
+      last_success_at: null,
+      coverage: null,
+    },
+    {
+      connector: "DATATOURISME",
+      available: true,
+      active_job: null,
+      latest_job: null,
+      last_success_at: null,
+      coverage: null,
+    },
+  ],
+};
+const waitingJob = {
+  id: "d24d7eef-1c58-4d0e-b8cb-8db5cb7671cd",
+  cycle_id: "f7391956-d270-4621-b21f-e9374bf454e4",
+  connector: "SIRENE",
+  trigger: "MANUAL",
+  state: "WAITING",
+  reference_label: candidate.normalized_label,
+  longitude: candidate.longitude,
+  latitude: candidate.latitude,
+  collection_radius_meters: 50_000,
+  created_at: "2026-09-20T12:00:00Z",
+  available_at: "2026-09-20T12:00:00Z",
+  started_at: null,
+  finished_at: null,
+  heartbeat_at: null,
+  attempt_count: 0,
+  max_attempts: 3,
+  progress: { stage: "waiting", processed: 0, total: null, observations: 0 },
+  last_error: null,
 };
 
 function response(body: unknown, status = 200): Response {
@@ -77,7 +113,8 @@ describe("authentication interface", () => {
     fetchMock
       .mockResolvedValueOnce(response({ code: "authentication_required" }, 401))
       .mockResolvedValueOnce(response(session))
-      .mockResolvedValueOnce(response(geography));
+      .mockResolvedValueOnce(response(geography))
+      .mockResolvedValueOnce(response(collections));
     render(<App />);
     const password = await screen.findByLabelText("Mot de passe");
 
@@ -97,6 +134,7 @@ describe("authentication interface", () => {
     fetchMock
       .mockResolvedValueOnce(response(session))
       .mockResolvedValueOnce(response(geography))
+      .mockResolvedValueOnce(response(collections))
       .mockResolvedValueOnce(response(session));
     render(<App />);
     await screen.findByText("Bonjour Radar");
@@ -118,7 +156,7 @@ describe("authentication interface", () => {
       ),
     ).toBeInTheDocument();
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith(
+      expect(fetchMock).toHaveBeenCalledWith(
         "/api/v1/auth/password",
         expect.objectContaining({
           headers: expect.objectContaining({ "X-CSRF-Token": "csrf-value" }),
@@ -133,13 +171,15 @@ describe("authentication interface", () => {
     fetchMock
       .mockResolvedValueOnce(response(session))
       .mockResolvedValueOnce(response(geography))
+      .mockResolvedValueOnce(response(collections))
       .mockResolvedValueOnce(response(candidate))
       .mockResolvedValueOnce(
         response({
           ...geography,
           reference_position: { ...candidate, confirmed_at: "2026-09-19T12:01:00Z" },
         }),
-      );
+      )
+      .mockResolvedValueOnce(response(collections));
     render(<App />);
     await screen.findByRole("heading", { name: "Adresse de référence" });
 
@@ -158,7 +198,7 @@ describe("authentication interface", () => {
       screen.getByText("L'adresse de référence est confirmée. Aucune collecte n'a été lancée."),
     ).toBeInTheDocument();
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenLastCalledWith(
+      expect(fetchMock).toHaveBeenCalledWith(
         "/api/v1/settings/geography/reference-position",
         expect.objectContaining({
           method: "POST",
@@ -174,9 +214,11 @@ describe("authentication interface", () => {
     fetchMock
       .mockResolvedValueOnce(response(session))
       .mockResolvedValueOnce(response(geography))
+      .mockResolvedValueOnce(response(collections))
       .mockResolvedValueOnce(
         response({ ...geography, collection_radius_meters: 50_000, search_radius_meters: 30_000 }),
-      );
+      )
+      .mockResolvedValueOnce(response(collections));
     render(<App />);
     await screen.findByRole("heading", { name: "Adresse de référence" });
 
@@ -188,7 +230,7 @@ describe("authentication interface", () => {
     expect(
       await screen.findByText("Les rayons ont été enregistrés sans nouvelle collecte."),
     ).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenLastCalledWith(
+    expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/settings/geography/radii",
       expect.objectContaining({
         method: "PATCH",
@@ -198,6 +240,43 @@ describe("authentication interface", () => {
         }),
       }),
     );
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("queues a manual collection and displays its durable waiting state", async () => {
+    // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API.
+    document.cookie = "radar_csrf=csrf-value; Path=/";
+    const confirmedGeography = {
+      ...geography,
+      reference_position: { ...candidate, confirmed_at: "2026-09-19T12:01:00Z" },
+    };
+    const activeCollections = {
+      connectors: [
+        { ...collections.connectors[0], active_job: waitingJob, latest_job: waitingJob },
+        collections.connectors[1],
+      ],
+    };
+    fetchMock
+      .mockResolvedValueOnce(response(session))
+      .mockResolvedValueOnce(response(confirmedGeography))
+      .mockResolvedValueOnce(response(collections))
+      .mockResolvedValueOnce(response({ created: true, job: waitingJob }, 202))
+      .mockResolvedValueOnce(response(activeCollections));
+    render(<App />);
+    await screen.findByRole("heading", { name: "Collectes" });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Actualiser maintenant" })[0]);
+
+    expect(
+      await screen.findByText("La collecte SIRENE a été placée en attente."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("En attente")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/collections/SIRENE",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "X-CSRF-Token": "csrf-value" }),
+      }),
+    );
   });
 });

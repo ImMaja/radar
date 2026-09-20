@@ -99,6 +99,7 @@ def test_idle_expiration_is_enforced_server_side(integration_database_url: str) 
         clock=clock,
     )
     try:
+        service.create_account(PASSWORD, PASSWORD)
         issued = service.login(PASSWORD)
         assert issued is not None
         clock.current += timedelta(hours=12, seconds=1)
@@ -117,6 +118,7 @@ def test_absolute_expiration_is_not_extended_by_activity(integration_database_ur
         clock=clock,
     )
     try:
+        service.create_account(PASSWORD, PASSWORD)
         issued = service.login(PASSWORD)
         assert issued is not None
         for _ in range(15):

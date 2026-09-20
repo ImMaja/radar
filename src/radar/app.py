@@ -11,14 +11,18 @@ from fastapi.staticfiles import StaticFiles
 from radar.auth.contracts import AuthenticationBackend
 from radar.auth.rate_limit import LoginRateLimiter
 from radar.auth.service import AuthService
+from radar.collections.contracts import CollectionBackend
+from radar.collections.service import CollectionService, UnavailableCollectionBackend
 from radar.config import Settings, get_settings
 from radar.geography.contracts import GeographyBackend
 from radar.geography.service import GeographyService
 from radar.persistence.auth import SqlAlchemyAuthRepository
+from radar.persistence.collections import SqlAlchemyCollectionRepository
 from radar.persistence.database import Database
 from radar.persistence.geography import SqlAlchemyGeographyRepository
 from radar.providers.geoplatform import GeoPlatformGeocoder
 from radar.web.auth import router as auth_router
+from radar.web.collections import router as collections_router
 from radar.web.errors import ApiProblem, api_problem_handler, request_validation_handler
 from radar.web.geography import router as geography_router
 from radar.web.health import ReadinessProbe
@@ -32,6 +36,7 @@ def create_app(
     authentication_backend: AuthenticationBackend | None = None,
     login_rate_limiter: LoginRateLimiter | None = None,
     geography_backend: GeographyBackend | None = None,
+    collection_backend: CollectionBackend | None = None,
 ) -> FastAPI:
     """Build one Radar web process with explicit dependencies."""
 
@@ -59,6 +64,12 @@ def create_app(
         geography_backend = GeographyService(
             SqlAlchemyGeographyRepository(owned_database.engine),
             owned_geocoder,
+        )
+    if collection_backend is None:
+        collection_backend = (
+            CollectionService(SqlAlchemyCollectionRepository(owned_database.engine))
+            if owned_database is not None
+            else UnavailableCollectionBackend()
         )
 
     @asynccontextmanager
@@ -88,9 +99,11 @@ def create_app(
     app.state.authentication_backend = authentication_backend
     app.state.login_rate_limiter = login_rate_limiter or LoginRateLimiter()
     app.state.geography_backend = geography_backend
+    app.state.collection_backend = collection_backend
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(geography_router)
+    app.include_router(collections_router)
     if resolved_settings.frontend_directory.joinpath("index.html").is_file():
         app.mount(
             "/",

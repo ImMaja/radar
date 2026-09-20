@@ -28,18 +28,80 @@ export interface ReferencePositionView {
   confirmed_at: string | null;
 }
 
-export interface ConnectorCoverageView {
-  connector: "SIRENE" | "DATATOURISME";
-  status: "NOT_COLLECTED";
-  search_circle_covered: false;
-}
-
 export interface GeographySettingsView {
   reference_position: ReferencePositionView | null;
   collection_radius_meters: number;
   search_radius_meters: number;
   updated_at: string;
-  coverage: ConnectorCoverageView[];
+}
+
+export type Connector = "SIRENE" | "DATATOURISME";
+export type CollectionJobState =
+  | "WAITING"
+  | "RUNNING"
+  | "WAITING_RETRY"
+  | "SUCCEEDED"
+  | "PARTIAL"
+  | "FAILED";
+
+export interface CollectionErrorView {
+  code: string;
+  message: string;
+  transient: boolean;
+}
+
+export interface CollectionProgressView {
+  stage: string;
+  processed: number;
+  total: number | null;
+  observations: number;
+}
+
+export interface CollectionJobView {
+  id: string;
+  cycle_id: string;
+  connector: Connector;
+  trigger: "MANUAL" | "SCHEDULED";
+  state: CollectionJobState;
+  reference_label: string;
+  longitude: number;
+  latitude: number;
+  collection_radius_meters: number;
+  created_at: string;
+  available_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  heartbeat_at: string | null;
+  attempt_count: number;
+  max_attempts: number;
+  progress: CollectionProgressView;
+  last_error: CollectionErrorView | null;
+}
+
+export interface ConnectorCoverageView {
+  established_at: string;
+  longitude: number;
+  latitude: number;
+  collection_radius_meters: number;
+  search_circle_covered: boolean;
+}
+
+export interface ConnectorCollectionStatusView {
+  connector: Connector;
+  available: boolean;
+  active_job: CollectionJobView | null;
+  latest_job: CollectionJobView | null;
+  last_success_at: string | null;
+  coverage: ConnectorCoverageView | null;
+}
+
+export interface CollectionDashboardView {
+  connectors: ConnectorCollectionStatusView[];
+}
+
+export interface EnqueuedCollectionView {
+  created: boolean;
+  job: CollectionJobView;
 }
 
 interface ErrorBody {
@@ -171,5 +233,16 @@ export function updateGeographyRadii(
       collection_radius_meters: collectionRadiusMeters,
       search_radius_meters: searchRadiusMeters,
     }),
+  );
+}
+
+export function getCollectionDashboard(): Promise<CollectionDashboardView> {
+  return request<CollectionDashboardView>("/api/v1/collections");
+}
+
+export function requestManualCollection(connector: Connector): Promise<EnqueuedCollectionView> {
+  return request<EnqueuedCollectionView>(
+    `/api/v1/collections/${connector}`,
+    jsonMutation("POST", {}),
   );
 }

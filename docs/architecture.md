@@ -408,11 +408,13 @@ Elle change naturellement lorsqu'une autre adresse de référence est
 confirmée. Une position inconnue reste `NULL` et ne reçoit jamais une distance
 fictive.
 
-Les contours de communes sont un référentiel local versionné. Pour une
-collecte Sirene, PostGIS sélectionne les contours qui intersectent le cercle
-élargi utilisé pour la présélection. Le calcul exact sur chaque établissement
-reste l'autorité pour décider « dans le rayon », « hors du rayon » ou
-« localisation à vérifier ».
+Les contours de communes sont un référentiel local versionné. Son activation
+est atomique après contrôle PostGIS ; les rares topologies sources invalides
+sont réparées de façon déterministe et comptabilisées dans la provenance. Pour
+une collecte Sirene, `ST_DWithin` sur l'expression `geography` indexée
+sélectionne les contours à une distance inférieure ou égale au rayon augmenté
+de 1 km. Le calcul exact sur chaque établissement reste l'autorité pour
+décider « dans le rayon », « hors du rayon » ou « localisation à vérifier ».
 
 ### 7.3 Couverture
 

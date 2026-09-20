@@ -181,10 +181,20 @@ Pour chaque version, Radar conserve :
 - la date de récupération et la date de publication disponible ;
 - la taille et une empreinte du fichier téléchargé ;
 - la licence ;
-- les codes commune et géométries effectivement chargés.
+- les codes commune et géométries effectivement chargés ;
+- le nombre de géométries sources invalides réparées avant activation.
 
-Une commune devient candidate lorsque son contour intersecte le cercle de
-collecte élargi de 1 km pour cette seule présélection. Cette marge, nettement
+Le chargement contrôle d'abord le fichier compressé, son empreinte et son
+contrat GeoJSON. PostGIS vérifie ensuite toutes les géométries. Une topologie
+source invalide est réparée avec `ST_MakeValid`, limitée à sa composante
+polygonale et comptabilisée dans la provenance ; le résultat doit rester non
+vide, valide et dans les bornes WGS84. Le changement de version est atomique :
+un échec conserve intégralement l'ancienne version active.
+
+Une commune devient candidate lorsque la distance géodésique entre son contour
+et le centre est inférieure ou égale au rayon de collecte augmenté de 1 km.
+La requête utilise `ST_DWithin` plutôt qu'un cercle polygonal approximatif.
+Cette marge, nettement
 supérieure à la généralisation du fichier, privilégie une légère
 sur-sélection plutôt qu'un oubli en bordure. Elle ne modifie pas le rayon
 métier : les coordonnées de chaque établissement sont ensuite comparées au
@@ -197,6 +207,10 @@ intersecte 405 communes. La présélection élargie de 1 km en retient 418, dont
 interroge ces 418 communes, puis filtre les coordonnées des établissements sur
 le cercle métier exact. Ces nombres sont des résultats de validation et seront
 recalculés pour tout autre centre ou millésime.
+
+Le chargement réel du millésime 2026 retient 34 791 communes métropolitaines
+et répare 16 contours invalides hors de la sélection autour de Dax. La requête
+géodésique retrouve bien les 418 communes attendues autour du point validé.
 
 Le référentiel est remplacé lorsqu'un nouveau millésime modifie le Code
 officiel géographique ou les contours utiles. Une collecte conserve la version

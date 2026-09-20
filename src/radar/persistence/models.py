@@ -1,9 +1,10 @@
 """SQLAlchemy models owned by Radar's persistence layer."""
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -28,6 +29,15 @@ class GeographyPoint(UserDefinedType[str]):
 
     def get_col_spec(self, **_kwargs: object) -> str:
         return "geography(Point,4326)"
+
+
+class GeometryMultiPolygon(UserDefinedType[str]):
+    """Minimal SQLAlchemy declaration for a PostGIS WGS84 multipolygon."""
+
+    cache_ok = True
+
+    def get_col_spec(self, **_kwargs: object) -> str:
+        return "geometry(MultiPolygon,4326)"
 
 
 class Base(DeclarativeBase):
@@ -153,3 +163,255 @@ class ApplicationSettingModel(Base):
     search_radius_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=50_000)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CollectionCycleModel(Base):
+    """Immutable geographic request and final business result of one collection."""
+
+    __tablename__ = "collection_cycle"
+    __table_args__ = (
+        CheckConstraint(
+            "connector IN ('SIRENE', 'DATATOURISME')",
+            name="ck_collection_cycle_connector",
+        ),
+        CheckConstraint(
+            "trigger IN ('MANUAL', 'SCHEDULED')",
+            name="ck_collection_cycle_trigger",
+        ),
+        CheckConstraint(
+            "result IS NULL OR result IN ('SUCCEEDED', 'PARTIAL', 'FAILED')",
+            name="ck_collection_cycle_result",
+        ),
+        CheckConstraint(
+            "collection_radius_meters BETWEEN 1 AND 50000",
+            name="ck_collection_cycle_radius",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    connector: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False)
+    result: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    adapter_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    configuration_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    reference_position_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("reference_position.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    center: Mapped[str] = mapped_column(GeographyPoint(), nullable=False)
+    collection_radius_meters: Mapped[int] = mapped_column(Integer, nullable=False)
+    schedule_timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    counters: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    error: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+
+class CollectionJobModel(Base):
+    """Durable PostgreSQL queue entry reserved by a collection worker."""
+
+    __tablename__ = "collection_job"
+    __table_args__ = (
+        CheckConstraint(
+            "connector IN ('SIRENE', 'DATATOURISME')",
+            name="ck_collection_job_connector",
+        ),
+        CheckConstraint(
+            "trigger IN ('MANUAL', 'SCHEDULED')",
+            name="ck_collection_job_trigger",
+        ),
+        CheckConstraint(
+            "state IN ('WAITING', 'RUNNING', 'WAITING_RETRY', 'SUCCEEDED', 'PARTIAL', 'FAILED')",
+            name="ck_collection_job_state",
+        ),
+        CheckConstraint("attempt_count >= 0", name="ck_collection_job_attempt_count"),
+        CheckConstraint("max_attempts BETWEEN 1 AND 10", name="ck_collection_job_max_attempts"),
+        CheckConstraint(
+            "(trigger = 'MANUAL' AND scheduled_for IS NULL) OR "
+            "(trigger = 'SCHEDULED' AND scheduled_for IS NOT NULL)",
+            name="ck_collection_job_scheduled_trigger",
+        ),
+        Index(
+            "uq_collection_job_active_request",
+            "request_fingerprint",
+            unique=True,
+            postgresql_where=text("state IN ('WAITING', 'RUNNING', 'WAITING_RETRY')"),
+        ),
+        Index(
+            "uq_collection_job_scheduled_slot",
+            "connector",
+            "scheduled_for",
+            unique=True,
+            postgresql_where=text("scheduled_for IS NOT NULL"),
+        ),
+        Index("ix_collection_job_reservation", "state", "available_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    cycle_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("collection_cycle.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    connector: Mapped[str] = mapped_column(String(32), nullable=False)
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False)
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    progress: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    last_safe_checkpoint: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    last_error: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class CollectionAttemptModel(Base):
+    """One effective reservation of a durable collection job."""
+
+    __tablename__ = "collection_attempt"
+    __table_args__ = (
+        CheckConstraint(
+            "result IS NULL OR result IN ('SUCCEEDED', 'RETRYABLE_FAILURE', 'PARTIAL', 'FAILED')",
+            name="ck_collection_attempt_result",
+        ),
+        CheckConstraint("attempt_number >= 1", name="ck_collection_attempt_number"),
+        Index(
+            "uq_collection_attempt_number",
+            "collection_job_id",
+            "attempt_number",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    collection_job_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("collection_job.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    worker_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_safe_checkpoint: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+
+
+class ConnectorCoverageModel(Base):
+    """Coverage proven only by a completely successful collection cycle."""
+
+    __tablename__ = "connector_coverage"
+    __table_args__ = (
+        CheckConstraint(
+            "connector IN ('SIRENE', 'DATATOURISME')",
+            name="ck_connector_coverage_connector",
+        ),
+        CheckConstraint(
+            "collection_radius_meters BETWEEN 1 AND 50000",
+            name="ck_connector_coverage_radius",
+        ),
+        Index("ix_connector_coverage_center", "center", postgresql_using="gist"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    connector: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    cycle_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("collection_cycle.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    center: Mapped[str] = mapped_column(GeographyPoint(), nullable=False)
+    collection_radius_meters: Mapped[int] = mapped_column(Integer, nullable=False)
+    established_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_freshness: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    explicit_limits: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class DatasetReleaseModel(Base):
+    """One immutable downloaded release of an external reference dataset."""
+
+    __tablename__ = "dataset_release"
+    __table_args__ = (
+        CheckConstraint("file_size_bytes > 0", name="ck_dataset_release_file_size"),
+        CheckConstraint(
+            "status IN ('STAGED', 'VALIDATED', 'ACTIVE', 'REJECTED', 'RETIRED')",
+            name="ck_dataset_release_status",
+        ),
+        Index(
+            "uq_dataset_release_active_dataset",
+            "dataset_code",
+            unique=True,
+            postgresql_where=text("status = 'ACTIVE'"),
+        ),
+        Index(
+            "ix_dataset_release_fingerprint",
+            "dataset_code",
+            "digest_algorithm",
+            "file_digest",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    source_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    dataset_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource_identifier: Mapped[str] = mapped_column(String(256), nullable=False)
+    resource_url: Mapped[str] = mapped_column(Text, nullable=False)
+    published_on: Mapped[date | None] = mapped_column(nullable=True)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    digest_algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
+    file_digest: Mapped[str] = mapped_column(String(128), nullable=False)
+    expected_schema: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    license_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CommuneBoundaryModel(Base):
+    """One metropolitan municipality boundary in a versioned release."""
+
+    __tablename__ = "commune_boundary"
+    __table_args__ = (
+        CheckConstraint(
+            "municipality_code ~ '^(?:[0-9]{5}|2[AB][0-9]{3})$'",
+            name="ck_commune_boundary_code",
+        ),
+        CheckConstraint(
+            "is_metropolitan_france IS TRUE",
+            name="ck_commune_boundary_metropolitan",
+        ),
+        CheckConstraint("NOT ST_IsEmpty(boundary)", name="ck_commune_boundary_not_empty"),
+        CheckConstraint("ST_IsValid(boundary)", name="ck_commune_boundary_valid"),
+        Index("ix_commune_boundary_boundary", "boundary", postgresql_using="gist"),
+    )
+
+    dataset_release_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("dataset_release.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    municipality_code: Mapped[str] = mapped_column(String(5), primary_key=True)
+    official_name: Mapped[str] = mapped_column(Text, nullable=False)
+    boundary: Mapped[str] = mapped_column(GeometryMultiPolygon(), nullable=False)
+    is_metropolitan_france: Mapped[bool] = mapped_column(Boolean, nullable=False)

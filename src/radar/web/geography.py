@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import Annotated, Literal, cast
+from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, status
@@ -86,18 +86,11 @@ class ReferencePositionResponse(BaseModel):
     confirmed_at: datetime | None
 
 
-class ConnectorCoverageResponse(BaseModel):
-    connector: Literal["SIRENE", "DATATOURISME"]
-    status: Literal["NOT_COLLECTED"] = "NOT_COLLECTED"
-    search_circle_covered: Literal[False] = False
-
-
 class GeographySettingsResponse(BaseModel):
     reference_position: ReferencePositionResponse | None
     collection_radius_meters: int
     search_radius_meters: int
     updated_at: datetime
-    coverage: list[ConnectorCoverageResponse]
 
 
 GEOGRAPHY_ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
@@ -153,10 +146,6 @@ def _settings_response(settings: GeographySettings) -> GeographySettingsResponse
         collection_radius_meters=settings.collection_radius_meters,
         search_radius_meters=settings.search_radius_meters,
         updated_at=settings.updated_at,
-        coverage=[
-            ConnectorCoverageResponse(connector="SIRENE"),
-            ConnectorCoverageResponse(connector="DATATOURISME"),
-        ],
     )
 
 

@@ -17,12 +17,17 @@ pas les fournisseurs externes.
 ## État du projet
 
 Le cadrage, la validation réelle des contrats externes autour de Dax, le socle
-applicatif, l'accès privé et le réglage géographique sont terminés. Radar
-fournit une application FastAPI, une base PostgreSQL/PostGIS, des migrations
-Alembic et une interface React statique pour le compte unique. L'utilisateur
-peut géocoder puis confirmer une adresse de France métropolitaine et régler
-séparément les rayons de collecte et de recherche jusqu'à 50 km. La prochaine
-tranche est l'exécution durable des collectes du jalon 5.
+applicatif, l'accès privé, le réglage géographique et le moteur durable de
+collecte sont terminés. Radar fournit une application FastAPI, une base
+PostgreSQL/PostGIS, des migrations Alembic, un worker séparé et une interface
+React statique pour le compte unique. L'utilisateur peut géocoder puis
+confirmer une adresse de France métropolitaine, régler séparément les rayons
+de collecte et de recherche jusqu'à 50 km et consulter l'état durable des
+connecteurs. Le jalon 6 est en cours : le contrat de lecture de l'API Sirene et
+le référentiel PostGIS versionné des communes sont implémentés et validés sur
+le vrai millésime 2026 autour de Dax. Le connecteur reste désactivé jusqu'à la
+persistance des prospects, au traitement de leurs positions et à la résolution
+du point de conformité sur la diffusion partielle.
 
 Le MVP est prévu pour un seul utilisateur et un seul food truck. Il sera
 accessible sur Internet derrière une authentification, sans exposer
@@ -112,6 +117,21 @@ interactive et refuse de remplacer un compte existant. En cas d'oubli :
 
 Cette seconde commande révoque toutes les sessions existantes. Aucun mot de
 passe n'est accepté en argument ou variable d'environnement.
+
+Le référentiel communal se charge séparément après téléchargement du fichier
+officiel. La migration ne contacte jamais une source externe :
+
+```bash
+.venv/bin/radar-admin import-municipalities communes-100m.geojson.gz \
+  --resource-identifier 2026 \
+  --resource-url https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/2026/geojson/communes-100m.geojson.gz \
+  --expected-sha256 4530cbf87a3af387c2da95935376f74b93eabd0a7595eacc5b7e0ed94a0b3778 \
+  --expected-size-bytes 8237354
+```
+
+La commande n'active la nouvelle version qu'après validation intégrale par
+PostGIS. Le téléchargement automatisé du prochain millésime n'est pas encore
+implémenté.
 
 Avec Podman Compose, remplacer `docker compose` par `podman compose`.
 L'application répond ensuite sur `http://127.0.0.1:8000`. Les contrôles
