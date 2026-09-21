@@ -2,7 +2,7 @@
 
 > Statut : conception logique du MVP
 >
-> Dernière mise à jour : 8 septembre 2026
+> Dernière mise à jour : 21 septembre 2026
 >
 > SGBD cible : PostgreSQL avec PostGIS
 
@@ -827,6 +827,14 @@ Une observation est une révision normalement immuable contenant :
 - statut de validation, notamment `VALID`, `REJECTED` ou
   `IDENTITY_CONFLICT`, et éventuelle erreur de normalisation non sensible.
 
+Pendant la préparation Sirene, une observation valide peut référencer
+directement son `external_identity` alors qu'aucune fiche et aucun
+`source_binding` n'existent encore. Cette étape est nécessaire car la
+présélection communale contient aussi des établissements hors du rayon exact.
+Après la résolution géographique, seuls les candidats à conserver pourront
+créer une fiche et un lien source ; l'observation n'est pas dupliquée pour ce
+seul rattachement.
+
 La charge est validée par le modèle typé de l'adaptateur avant insertion. Le
 `jsonb` n'est pas utilisé comme substitut aux colonnes relationnelles servant
 aux filtres ; il conserve la preuve normalisée et les champs source
@@ -1023,8 +1031,9 @@ Un connecteur peut combiner plusieurs sources. Cette table associe au cycle :
 - l'éventuelle version de jeu ;
 - la date de dernière mise à disposition annoncée ;
 - les instants de début et fin ;
-- le statut et les compteurs propres à cette source ;
-- le nombre d'appels, de reprises et d'erreurs ;
+- le statut, les métadonnées non sensibles et les compteurs propres à cette
+  source ;
+- le nombre de réponses acceptées, de reprises de lot et d'erreurs ;
 - la version de contrat utilisée.
 
 Elle distingue ainsi la fraîcheur de l'API Sirene, du fichier géographique et
@@ -1040,15 +1049,18 @@ contient :
 - type et clé stable du lot ;
 - numéro d'ordre ;
 - état et nombre de tentatives ;
+- dernière tentative de collecte qui l'a pris en charge ;
 - instants de début et fin ;
 - total annoncé, nombre reçu et nombre d'identifiants uniques ;
+- compteurs de traitement, dont objets importables et motifs de rejet ;
 - état de reprise `jsonb` strictement dépourvu de secret ;
 - erreur structurée et non sensible.
 
-La paire cycle-clé de lot est unique. Un curseur ou lien `next` n'est conservé
-que si la source en autorise la reprise et après retrait de tout secret. Son
-hôte, son schéma et son empreinte peuvent être conservés sans stocker une clé
-API.
+La paire cycle-clé de lot est unique. Pour Sirene, le curseur brut n'est pas
+conservé et une interruption relance le lot depuis son curseur initial ; seule
+l'empreinte du curseur suivant sert de preuve diagnostique. Pour une autre
+source, un curseur ou lien `next` ne pourra être conservé que si la source en
+autorise la reprise et après retrait de tout secret.
 
 ### 15.6 `collection_page`
 
@@ -1060,11 +1072,16 @@ Une page contient :
 - nombre d'objets reçus et uniques ;
 - total et nombre de pages annoncés lorsqu'ils existent ;
 - empreintes du curseur reçu et du lien suivant ;
+- indicateur de page terminale ;
 - état de traitement et erreur non sensible.
 
-La clé de page est unique dans son lot. Cette table permet de démontrer qu'un
-curseur ou un lien `next` a été parcouru jusqu'à son terme sans conserver les
-réponses brutes.
+La clé de page est unique dans son lot et inclut la tentative lorsque la
+politique impose une relecture complète. La page n'est marquée `PROCESSED`
+qu'après le traitement réussi de ses candidats. Les preuves des tentatives
+interrompues restent donc visibles, mais seuls les comptages de la tentative
+qui termine le lot sont utilisés pour le réconcilier. Cette table permet de
+démontrer qu'un curseur ou un lien `next` a été parcouru jusqu'à son terme sans
+conserver les réponses brutes.
 
 ### 15.7 `collection_cycle_commune`
 
@@ -1097,12 +1114,26 @@ ligne légère :
   `REJECTED` et `ERROR` ;
 - motif structuré d'un rejet ou d'une erreur.
 
-La paire page-rang est unique. Plusieurs occurrences du même identifiant sont
-donc conservées et détectables si un fournisseur le renvoie sur plusieurs
-pages. Un index cycle-identité permet de compter les identifiants distincts.
-Cette table sert aux totaux et au diagnostic, y compris pour un établissement
-hors du cercle exact qui ne crée pas de fiche. Elle ne doit pas devenir une
-copie supplémentaire du contenu source.
+La paire tentative-lot-page-rang est unique. Plusieurs occurrences du même
+identifiant sont donc conservées et détectables si un fournisseur le renvoie
+sur plusieurs pages ou si un lot est relu après interruption. Entre la
+transaction de préparation des candidats et l'acquittement de la page, la
+référence à `collection_page` peut temporairement être nulle. Si le processus
+s'interrompt dans cette fenêtre, cette occurrence non acquittée reste un
+diagnostic de la tentative abandonnée et la reprise crée une nouvelle
+occurrence ; l'identité et l'observation identique sont réutilisées. Un index
+cycle-identité permet de compter les identifiants distincts. Cette table sert
+aux totaux et au diagnostic, y compris pour un établissement hors du cercle
+exact qui ne crée pas de fiche. Elle ne doit pas devenir une copie
+supplémentaire du contenu source.
+
+Lors de la préparation SIRENE, la coordonnée Lambert-93 de l'API est contrôlée
+en lot par PostGIS avec le contour et la marge figés dans le cycle. Une
+coordonnée cohérente reçoit immédiatement `IN_RADIUS` ou `OUTSIDE_RADIUS` et sa
+distance au centre ; une coordonnée absente, hors bornes ou incohérente avec la
+commune reçoit `LOCATION_UNKNOWN` et attend le fichier géographique puis, si
+nécessaire, le géocodeur. Aucune de ces décisions intermédiaires ne crée encore
+une fiche.
 
 Une diffusion partielle Sirene supprime les `collection_item` identifiants de
 l'objet concerné, y compris leur valeur, leur empreinte et leurs liens. Les
@@ -1116,14 +1147,41 @@ et unique avec une décision `REJECTED`, sans produire de fiche. Cette
 distinction est indispensable pour réconcilier le fournisseur sans confondre
 volume brut et opportunités importées.
 
-### 15.9 `collection_reference_usage`
+### 15.9 `candidate_position`
+
+Avant la création d'une fiche, chaque position proposée pour une occurrence de
+collecte est évaluée séparément. Cette table contient :
+
+- l'occurrence `collection_item` et l'observation source correspondantes ;
+- le millésime de référence lorsqu'il s'agit du fichier mensuel ;
+- l'origine parmi API Sirene, fichier de géolocalisation et futur géocodeur ;
+- le point WGS84 contrôlé, éventuellement absent ;
+- le système de coordonnées et le code de qualité propres à cette seule source ;
+- la précision normalisée et l'utilisabilité ;
+- le résultat du contrôle communal ;
+- le classement dans le rayon et la distance uniquement lorsque la position
+  est utilisable pour une décision exacte ;
+- la version de règle et les diagnostics non sensibles.
+
+La paire occurrence-origine est unique. Une reprise réutilise donc l'évaluation
+de la même occurrence, tandis qu'une nouvelle tentative de collecte conserve
+sa propre occurrence. Les qualités du fichier `11`, `12`, `21`, `22` ou `33`
+ne sont jamais inscrites sur la ligne API. Une qualité `33` peut conserver son
+point comme preuve, mais son classement reste `LOCATION_UNKNOWN`, son
+utilisabilité `TO_VERIFY` et sa distance décisionnelle `NULL`.
+
+Cette table représente des candidats à la résolution, pas les localisations
+effectives consultées par l'interface. Après création de la fiche, seule la
+position choisie par la règle versionnée produit une `location_assertion`.
+
+### 15.10 `collection_reference_usage`
 
 Cette association relie un cycle à chaque `dataset_release` utilisé, avec son
 rôle : contours de communes, géolocalisation Sirene ou autre référentiel. Elle
 permet de reproduire le contexte d'une collecte sans imposer un jeu
 géographique précis au schéma métier.
 
-### 15.10 `connector_coverage`
+### 15.11 `connector_coverage`
 
 Une couverture est créée uniquement à la réussite complète d'un cycle :
 

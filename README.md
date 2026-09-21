@@ -23,11 +23,23 @@ PostgreSQL/PostGIS, des migrations Alembic, un worker séparé et une interface
 React statique pour le compte unique. L'utilisateur peut géocoder puis
 confirmer une adresse de France métropolitaine, régler séparément les rayons
 de collecte et de recherche jusqu'à 50 km et consulter l'état durable des
-connecteurs. Le jalon 6 est en cours : le contrat de lecture de l'API Sirene et
-le référentiel PostGIS versionné des communes sont implémentés et validés sur
-le vrai millésime 2026 autour de Dax. Le connecteur reste désactivé jusqu'à la
-persistance des prospects, au traitement de leurs positions et à la résolution
-du point de conformité sur la diffusion partielle.
+connecteurs. Le jalon 6 est en cours : le contrat de lecture de l'API Sirene,
+le référentiel PostGIS versionné des communes et la planification durable des
+lots sont implémentés. Leur exécution persistée réconcilie les pages et les
+totaux, conserve les preuves non sensibles par tentative et reprend un lot
+interrompu depuis son début. Les candidats publics sont préparés par page avec
+leur identité, leur observation normalisée et leur occurrence de collecte ;
+les coordonnées API valides sont déjà contrôlées et classées exactement par
+PostGIS, sans créer prématurément de fiche prospect. Le lecteur du fichier
+mensuel Parquet est également arrêté : il valide le schéma et les empreintes,
+puis joint uniquement les SIRET du cycle par lots bornés avec DuckDB, sans
+charger les 38 millions de lignes en mémoire. Ses positions sont persistées
+avec un millésime et une qualité propres, contrôlées par PostGIS et activées
+seulement après réconciliation complète ; une qualité communale `33` reste à
+vérifier. Le vrai millésime 2026 et la sélection autour de Dax ont été validés.
+Le connecteur reste désactivé jusqu'au choix de la position effective, à la
+création des prospects et à la résolution du point de conformité sur la
+diffusion partielle.
 
 Le MVP est prévu pour un seul utilisateur et un seul food truck. Il sera
 accessible sur Internet derrière une authentification, sans exposer
@@ -55,7 +67,8 @@ Backend :
 - PostgreSQL et PostGIS ;
 - SQLAlchemy et Alembic ;
 - Pydantic ;
-- httpx.
+- httpx ;
+- DuckDB, uniquement pour lire et joindre localement le grand Parquet Sirene.
 
 Le frontend utilise TypeScript, React et Vite. Son build est statique et servi
 sous la même origine que l'API ; Radar n'ajoute ni Next.js ni processus Node en

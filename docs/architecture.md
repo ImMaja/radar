@@ -2,7 +2,7 @@
 
 > Statut : cadrage technique du MVP
 >
-> Dernière mise à jour : 11 septembre 2026
+> Dernière mise à jour : 21 septembre 2026
 >
 > Périmètre : monolithe modulaire déployé sur un serveur privé
 
@@ -48,6 +48,8 @@ frontières fonctionnelles définies ici de manière implicite.
 1. Radar est un **monolithe modulaire** : un seul dépôt, un seul modèle métier
    et une seule base de données.
 2. Le backend utilise Python, FastAPI, Pydantic, SQLAlchemy, Alembic et `httpx`.
+   DuckDB est embarqué uniquement dans l'adaptateur du fichier Parquet Sirene :
+   il ne constitue ni une seconde base métier ni un processus serveur.
 3. PostgreSQL avec PostGIS constitue l'unique stockage persistant métier et la
    file de travaux durables.
 4. Le serveur web et le worker sont deux processus du même logiciel et de la
@@ -184,6 +186,14 @@ adaptateur ne valide jamais implicitement une transaction.
   collecte entière n'immobilise pas une transaction pendant plusieurs minutes.
 - L'état du travail, son point de reprise et ses compteurs sont enregistrés
   après chaque point sûr.
+- Pour Sirene, le gestionnaire idempotent traite d'abord les candidats d'une
+  page, puis l'orchestrateur enregistre sa preuve `PROCESSED`. Une interruption
+  avant cette preuve relit le lot depuis son curseur initial ; les écritures
+  métier déjà effectuées doivent donc tolérer cette répétition.
+- Les candidats Sirene sont insérés par page au moyen d'opérations SQL
+  groupées. L'identité et une observation au contenu inchangé sont réutilisées,
+  tandis que chaque tentative conserve sa propre occurrence. Cette préparation
+  ne crée aucune fiche avant le classement géographique exact.
 - Une observation et les modifications de fiche directement dérivées sont
   validées ensemble.
 - Une erreur annule le lot courant, pas les lots déjà confirmés.
@@ -620,15 +630,19 @@ Le connecteur Sirene exécute, dans l'ordre :
    `docs/data-sources.md` ;
 5. suivre chaque curseur, enregistrer les compteurs et vérifier les SIRET
    uniques ;
-6. extraire et contrôler séparément les coordonnées courantes de l'API et du
+6. préparer les observations normalisées et contrôler par PostGIS les
+   coordonnées courantes de l'API ; une position cohérente avec sa commune est
+   classée immédiatement dans ou hors du rayon, tandis qu'une position absente
+   ou invalide reste à résoudre ;
+7. extraire et contrôler séparément les coordonnées courantes de l'API et du
    fichier officiel, sans transférer la qualité de l'une à l'autre ;
-7. résoudre la position selon la règle versionnée, puis géocoder en repli les
+8. résoudre la position selon la règle versionnée, puis géocoder en repli les
    adresses publiques lorsqu'aucun candidat n'est utilisable ;
-8. calculer le classement géographique exact ;
-9. contrôler, après succès de l'énumération, les SIRET connus devenus absents ;
-10. appliquer les changements administratifs ou de diffusion uniquement sur
+9. calculer le classement géographique exact ;
+10. contrôler, après succès de l'énumération, les SIRET connus devenus absents ;
+11. appliquer les changements administratifs ou de diffusion uniquement sur
     une réponse explicite ;
-11. publier les compteurs et la couverture si toutes les étapes obligatoires
+12. publier les compteurs et la couverture si toutes les étapes obligatoires
     réussissent.
 
 Le téléchargement du fichier géographique et l'appel de l'API possèdent des
@@ -652,10 +666,21 @@ qualité géographique et source de repli. Le worker :
 - peut retélécharger ce fichier externe : il n'est pas une sauvegarde des
   données utilisateur.
 
-Le lecteur Parquet exact sera choisi au début du jalon 6 par un prototype
-borné. Le fichier validé d'août 2026 contient 37 820 296 lignes pour
-809 215 388 octets ; la lecture doit donc sélectionner par SIRET sans charger
-le fichier entier en mémoire ni le recopier intégralement dans PostgreSQL.
+Le prototype borné du jalon 6 retient DuckDB comme lecteur Parquet embarqué.
+L'adaptateur contrôle la taille et l'empreinte, vérifie les neuf colonnes utiles
+et leurs types, rejette un SIRET demandé présent plusieurs fois, puis joint une
+table temporaire des seuls SIRET du cycle. Les résultats sont transmis par lots
+bornés. Le fichier validé d'août 2026 contient 37 820 296 lignes pour
+809 215 388 octets ; ni son contenu complet ni ses colonnes inutiles ne sont
+chargés en mémoire ou recopiés dans PostgreSQL.
+
+Pour chaque SIRET trouvé, Radar crée ou réutilise une observation
+`SIRENE_GEOLOCATION` liée au millésime, puis une `candidate_position` propre à
+l'occurrence courante. Les lots sont validés dans des transactions bornées. Un
+millésime nouveau reste `STAGED` pendant la lecture et ne remplace atomiquement
+la version `ACTIVE` qu'après réconciliation des SIRET demandés, trouvés et
+absents. Une erreur retire les évaluations non publiées et marque le millésime
+stagé `REJECTED` ; elle ne remplace jamais la version active précédente.
 
 ### 9.3 Résolution des positions
 
@@ -1147,16 +1172,14 @@ seuls une extraction en microservices.
 Les points suivants ne bloquent pas la rédaction des autres documents, mais
 doivent être résolus avant leur lot d'implémentation :
 
-1. bibliothèque de lecture Parquet du fichier géographique, à choisir par un
-   prototype borné avant le jalon 6 ;
-2. avant le début du jalon 6, règles exactes de purge et de conservation d'une
-   HMAC lors d'un passage Sirene en diffusion partielle, après validation de
-   conformité ;
-3. mécanisme d'exploitation choisi sur le serveur réel, `systemd` ou
+1. avant l'activation du connecteur Sirene, règles exactes de purge et de
+   conservation d'une HMAC lors d'un passage Sirene en diffusion partielle,
+   après validation de conformité ;
+2. mécanisme d'exploitation choisi sur le serveur réel, `systemd` ou
    composition de conteneurs simple ;
-4. paramètres Argon2id et durées définitives de session après mesure sur le
+3. paramètres Argon2id et durées définitives de session après mesure sur le
    matériel et validation de l'ergonomie ;
-5. paramètres du pool SQLAlchemy et limites de ressources après la première
+4. paramètres du pool SQLAlchemy et limites de ressources après la première
    collecte implémentée.
 
 Ces décisions doivent être consignées avant le code correspondant. Elles ne

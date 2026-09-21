@@ -2,7 +2,7 @@
 
 > Statut : contrats du MVP validés autour de Dax
 >
-> Dernière mise à jour : 8 septembre 2026
+> Dernière mise à jour : 21 septembre 2026
 >
 > Périmètre : France métropolitaine, MVP Sirene et DATAtourisme
 
@@ -385,6 +385,22 @@ coordonnées longitude/latitude WGS84, le code commune et des variables de
 qualité. Le fichier d'août 2026 pèse `809 215 388` octets au format Parquet et
 contient `37 820 296` lignes ; son volume doit être pris en compte sans être
 confondu avec le volume final conservé par Radar.
+
+Le lecteur retenu au jalon 6 est DuckDB embarqué dans le processus worker. Il
+n'est pas un stockage métier : une base temporaire en mémoire contient
+uniquement les SIRET attendus, puis une jointure locale lit dans le Parquet les
+colonnes `SIRET`, `X`, `Y`, `QUALITE_XY`, `EPSG`, `PLG_CODE_COMMUNE`,
+`DISTANCE_PRECISION`, `y_latitude` et `x_longitude`. Le schéma et les types
+documentés par l'Insee sont contrôlés avant la première émission. Les lignes
+correspondantes sont transmises par lots bornés ; les colonnes et lignes
+inutiles ne sont jamais copiées dans PostgreSQL.
+
+Les lignes trouvées deviennent des observations `SIRENE_GEOLOCATION` et des
+positions candidates distinctes de celles de l'API. Le millésime reste en état
+de préparation pendant cette écriture par lots ; il ne devient actif qu'après
+réconciliation du nombre de SIRET demandés, trouvés et absents. Une qualité
+`33` ou un contrôle communal négatif conserve une preuve diagnostique, mais ne
+produit ni classement exact dans le rayon ni distance décisionnelle.
 
 Le traitement doit :
 

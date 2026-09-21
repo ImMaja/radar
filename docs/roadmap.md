@@ -1,8 +1,8 @@
 # Radar — Roadmap
 
-> Statut : jalons 0 à 5 terminés ; prochaine étape, jalon 6
+> Statut : jalons 0 à 5 terminés ; jalon 6 en cours
 >
-> Dernière mise à jour : 20 septembre 2026
+> Dernière mise à jour : 21 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -283,12 +283,72 @@ la zone de Dax et reproduit les 418 communes candidates attendues. Les tests
 couvrent aussi l'idempotence, le remplacement de version et l'échec sans perte
 de la version active.
 
-Restent notamment à réaliser avant la sortie du jalon : persister les
-lots/pages/observations, traiter le fichier géographique mensuel, résoudre les
-positions, importer les prospects
-et leur provenance, fournir les listes et filtres, puis fermer la décision de
-conformité sur la diffusion partielle. Le connecteur reste donc désactivé dans
-l'interface et le worker de production.
+Le troisième incrément fige, avant tout appel fournisseur, le millésime de
+contours, les communes candidates et leur affectation à des lots disjoints de
+30 codes maximum. Les tables `collection_source_run`, `collection_batch`,
+`collection_page`, `collection_cycle_commune` et
+`collection_reference_usage` séparent l'exécution, les preuves de pagination
+et les référentiels employés. Le planificateur exige une réservation worker
+active et est idempotent : après un crash ou l'activation d'un nouveau
+référentiel, le cycle reprend ses mêmes communes et identifiants de lots. Un
+scénario PostGIS avec 65 communes vérifie les lots `30 + 30 + 5`, l'absence de
+recouvrement et la conservation de l'ancien millésime après remplacement.
+
+Le quatrième incrément exécute ce plan dans le worker et conserve une preuve
+non sensible après chaque page effectivement traitée. Une page n'est marquée
+`PROCESSED` qu'après le retour du gestionnaire de candidats ; une interruption
+entre les deux impose donc la relecture idempotente du lot au lieu de produire
+un faux succès. Le curseur Sirene brut n'est jamais persisté, seulement son
+empreinte, et chaque nouvelle tentative recommence le lot au curseur initial.
+La page terminale vide, les totaux annoncés, reçus et uniques sont réconciliés
+avant de valider le lot, puis tous les lots doivent réussir avant de valider la
+source. Les métadonnées de service, compteurs, erreurs et historiques de pages
+restent attachés au cycle. Deux scénarios PostgreSQL/PostGIS couvrent le chemin
+nominal idempotent et une indisponibilité temporaire après la première page,
+suivie d'une reprise complète qui publie finalement la couverture.
+
+Le cinquième incrément ajoute la préparation idempotente des candidats avant
+la création des fiches. Les tables `data_source`, `external_identity`,
+`source_observation` et `collection_item` conservent respectivement la source
+technique, l'identité SIRET, la révision normalisée et chaque occurrence par
+tentative. Une relecture de lot réutilise l'identité et l'observation lorsque
+leur contenu est inchangé, mais garde une occurrence distincte ; celle-ci est
+rattachée à la preuve de page seulement après le succès du traitement. Les
+pages de 1 000 candidats sont écrites avec des opérations SQL groupées. Dans
+la même transaction, PostGIS transforme les coordonnées API Lambert-93,
+contrôle leur cohérence avec la commune et sa marge versionnée, calcule la
+distance au centre puis classe les positions utilisables dans ou hors du rayon.
+Une coordonnée absente ou incohérente reste `LOCATION_UNKNOWN` pour le repli
+géographique suivant. Un scénario de reprise confirme qu'une même révision
+n'est pas dupliquée et qu'aucune fiche n'est créée avant cette résolution.
+
+Le sixième incrément arrête le lecteur du fichier mensuel sur DuckDB embarqué,
+sans ajouter de serveur ni de stockage métier. Il vérifie le fichier local, sa
+taille, le SHA-1 publié et son SHA-256 calculé, ainsi que les neuf colonnes et
+types documentés par l'Insee. Il place seulement les SIRET du cycle dans une
+table temporaire, rejette une correspondance dupliquée et transmet les lignes
+trouvées par lots bornés. Une absence reste normale pour un établissement plus
+récent que le millésime du fichier. Des Parquet synthétiques couvrent la
+sélection, les absences, le découpage, la dérive de schéma, les doublons et les
+preuves de fichier sans télécharger le livrable de 810 Mo dans les tests.
+
+Le septième incrément persiste chaque proposition géographique dans
+`candidate_position`, séparément de l'occurrence et de l'observation brute. La
+position API reste `UNKNOWN/USABLE` sans qualité empruntée au fichier. Le
+fichier possède sa propre `data_source`, son `dataset_release`, son exécution et
+ses compteurs ; un nouveau millésime ne devient `ACTIVE` qu'après rapprochement
+des totaux demandés, trouvés et absents. PostGIS contrôle indépendamment le
+point, le code commune et la marge figée. Les qualités `11`, `12`, `21` et `22`
+peuvent produire un classement exact, tandis que `33` reste `TO_VERIFY`, sans
+distance décisionnelle. Le scénario de reprise API importe ensuite deux
+positions fichier, répète l'import sans duplication et vérifie ces deux
+comportements de qualité.
+
+Restent notamment à réaliser avant la sortie du jalon : choisir la position
+effective entre les candidates, intégrer le géocodage de repli, créer les
+organismes, établissements et prospects retenus, fournir les listes et filtres,
+puis fermer la décision de conformité sur la diffusion partielle. Le connecteur
+reste donc désactivé dans l'interface et le worker de production.
 
 ### Jalon 7 — Événements DATAtourisme de bout en bout
 

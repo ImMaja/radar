@@ -94,6 +94,17 @@ class MunicipalityReferenceRepository(Protocol):
     ) -> MunicipalitySelection: ...
 
 
+class MunicipalityReferenceBackend(Protocol):
+    """Application-facing municipality selection independent from persistence."""
+
+    def select_candidates(
+        self,
+        longitude: float,
+        latitude: float,
+        collection_radius_meters: int,
+    ) -> MunicipalitySelection: ...
+
+
 class MunicipalityReferenceError(RuntimeError):
     """Base class for controlled reference-data failures."""
 
