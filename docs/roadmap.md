@@ -2,7 +2,7 @@
 
 > Statut : jalons 0 à 5 terminés ; jalon 6 en cours
 >
-> Dernière mise à jour : 21 septembre 2026
+> Dernière mise à jour : 22 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -340,15 +340,78 @@ ses compteurs ; un nouveau millésime ne devient `ACTIVE` qu'après rapprochemen
 des totaux demandés, trouvés et absents. PostGIS contrôle indépendamment le
 point, le code commune et la marge figée. Les qualités `11`, `12`, `21` et `22`
 peuvent produire un classement exact, tandis que `33` reste `TO_VERIFY`, sans
-distance décisionnelle. Le scénario de reprise API importe ensuite deux
-positions fichier, répète l'import sans duplication et vérifie ces deux
-comportements de qualité.
+distance décisionnelle. Le scénario de reprise API importe ensuite trois
+positions fichier, répète l'import sans duplication et vérifie la priorité API,
+le repli fichier et le cas à géocoder.
 
-Restent notamment à réaliser avant la sortie du jalon : choisir la position
-effective entre les candidates, intégrer le géocodage de repli, créer les
-organismes, établissements et prospects retenus, fournir les listes et filtres,
-puis fermer la décision de conformité sur la diffusion partielle. Le connecteur
-reste donc désactivé dans l'interface et le worker de production.
+Le huitième incrément applique la priorité versionnée aux seules occurrences
+de la tentative API réussie : position API utilisable, puis position fichier
+utilisable, sinon `POSITION_GEOCODING_REQUIRED`. Le classement et la distance
+retenus sont reportés sur `collection_item` sans modifier les candidats ni
+transférer leur qualité. Le diagnostic conserve la source et l'identifiant de
+la position choisie, ainsi que l'écart lorsqu'API et fichier sont tous deux
+valides mais distants de plus d'un kilomètre. L'opération exige les deux
+sources réconciliées, rapproche tous ses compteurs et peut être répétée sans
+créer de donnée supplémentaire.
+
+Le neuvième incrément ajoute le géocodage de repli derrière l'adaptateur
+Géoplateforme existant. Il ne sélectionne que les occurrences encore marquées
+`POSITION_GEOCODING_REQUIRED`, limite l'exécution à une requête simultanée et
+20 requêtes par seconde, puis persiste chaque réponse avant de poursuivre. Un
+résultat `housenumber` ou `street` n'est utilisable que si son code commune est
+celui attendu et si PostGIS le situe dans le contour communal ou sa marge
+figée. Le score fournisseur est conservé, mais aucun seuil arbitraire n'est
+inventé. Les absences et résultats insuffisants deviennent des preuves
+explicites ; après réconciliation complète de la source, une seconde passe de
+résolution retient le résultat utilisable ou marque `POSITION_UNRESOLVED`. Le
+scénario PostgreSQL/PostGIS couvre le succès, l'adresse introuvable, la reprise
+idempotente et l'absence d'appel réseau dans les tests.
+
+Le dixième incrément matérialise les résultats définitifs, page fournisseur par
+page fournisseur, sans transaction couvrant tout le cycle. Un candidat dans le
+rayon ou encore sans position crée ou actualise un `organization`, un
+`establishment` et une fiche `prospect` stable ; un candidat hors du rayon exact
+reçoit seulement `COUNTED_ONLY`. Le SIRET rattache les collectes suivantes au
+même établissement et le lien source reste distinct de la fiche. La projection
+conserve aussi la présence du cycle, la filiation des champs et une
+`location_assertion` source versionnée. Le nom initial suit une priorité
+explicite entre enseigne locale, dénomination usuelle et dénomination légale ;
+le type d'organisme demeure `UNKNOWN` tant qu'aucun mapping validé n'existe. Un
+scénario PostgreSQL/PostGIS crée quatre prospects dont un à localisation
+inconnue, comptabilise un cinquième établissement hors rayon et vérifie qu'une
+répétition ne crée aucun doublon.
+
+Le onzième incrément fournit la première lecture authentifiée du catalogue
+local. `GET /api/v1/prospects` applique dans PostgreSQL la recherche par nom,
+raison sociale, SIRET, commune ou code postal, les filtres de type, activité et
+effectif, les tris par distance ou nom et une pagination bornée. Le rayon
+configuré est utilisé par défaut et peut être remplacé ponctuellement jusqu'à
+50 kilomètres ; `ST_DWithin` et `ST_Distance` repartent toujours de la position
+de référence courante. Un mode séparé expose les localisations à vérifier sans
+leur inventer de distance. `GET /api/v1/prospects/{id}` restitue l'identité du
+site, l'adresse, la qualité géographique et la provenance courante. Les routes
+sont privées, ne contactent aucun fournisseur et excluent des listes ordinaires
+les fiches masquées, fermées, cessées ou non prospectables. Les scénarios API
+et PostgreSQL/PostGIS couvrent les bornes, filtres, tris, rayons, états de
+localisation et sources.
+
+Le douzième incrément rend ces lectures utilisables dans l'interface React sans
+ajouter de routeur ni de dépendance. Une navigation privée sépare le catalogue
+des réglages. La liste affiche douze fiches par page, applique explicitement la
+recherche et les filtres, permet les tris par nom ou distance et conserve la
+pagination côté serveur. Un onglet dédié montre les localisations à vérifier
+sans rayon ni distance inventée. La fiche détaillée présente l'identité Sirene,
+l'activité, l'effectif, l'adresse, la précision géographique et la fraîcheur de
+chaque source. Sans adresse confirmée, l'écran guide vers les réglages et ne
+contacte pas l'API de catalogue. Les tests navigateur couvrent ce garde-fou,
+les paramètres de filtre, la pagination et l'ouverture d'une fiche.
+
+Restent notamment à réaliser avant la sortie du jalon : matérialiser les
+contacts et scores afin d'ajouter leurs filtres, couvrir l'actualisation par un
+nouveau cycle réussi, puis fermer la décision de conformité sur la diffusion
+partielle. Il faudra également composer la chaîne complète dans le worker
+seulement lorsque ces étapes seront prêtes. Le connecteur reste donc désactivé
+dans l'interface et le worker de production.
 
 ### Jalon 7 — Événements DATAtourisme de bout en bout
 

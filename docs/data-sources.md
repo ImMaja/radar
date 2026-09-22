@@ -105,7 +105,7 @@ jamais inactives les données du dernier cycle réussi.
 
 | Besoin | Source retenue | Fréquence | Accès | État au 6 septembre 2026 |
 | --- | --- | --- | --- | --- |
-| Géocoder l'adresse de référence | API de géocodage de la Géoplateforme | À la demande | Sans clé, 50 requêtes/s/IP | Appel unitaire validé ; repli des établissements à tester dans l'adaptateur |
+| Géocoder l'adresse de référence et les replis Sirene | API de géocodage de la Géoplateforme | À la demande | Sans clé, 50 requêtes/s/IP | Appel unitaire validé ; repli persistant testé à 20 requêtes/s maximum |
 | Trouver les communes candidates | Jeu « Contours administratifs » de data.gouv.fr | À chaque nouveau millésime utile | Téléchargement ouvert | Millésime 2026 testé et validé |
 | Découvrir et actualiser les établissements | API Sirene 3.11 de l'Insee | Mensuelle et manuelle | Compte et clé publique, 30 requêtes/min | Contrat, lots et curseur validés |
 | Géolocaliser les établissements Sirene | Coordonnées API puis fichier mensuel officiel de géolocalisation Sirene | Mensuelle | API et téléchargement ouvert | Stratégie hybride validée |
@@ -454,6 +454,22 @@ résultat, le score, la date et le fournisseur restent distincts des deux
 sources Sirene. Si aucune position n'est assez fiable, la fiche va dans
 « Localisation à vérifier » et sa distance reste inconnue.
 
+Le repli du jalon 6 traite ces adresses une par une, à concurrence un et avec
+un plafond interne de 20 requêtes par seconde, plus prudent que la limite
+fournisseur documentée. Chaque résultat est persisté avant l'appel suivant ;
+une reprise n'interroge donc que les occurrences encore sans résultat. La
+source n'est déclarée réussie qu'après réconciliation de toutes les adresses
+demandées.
+
+Radar conserve le score renvoyé, mais ne fixe aucun seuil numérique non validé.
+Un résultat devient automatiquement utilisable seulement si son type est
+`housenumber` ou `street`, si son code commune égale celui de l'adresse Sirene
+et si PostGIS confirme le point dans le contour communal ou sa marge d'un
+kilomètre. Un résultat plus vague, un écart de commune ou de contour reste
+`TO_VERIFY`. Une absence de résultat devient `MISSING`. Dans tous ces cas, la
+requête, la réponse ou son absence, le fournisseur et la version de règle
+restent traçables.
+
 ### 5.7 Résultats géographiques et résolution
 
 Sur 160 165 candidats Sirene, l'API fournissait 129 689 coordonnées et en
@@ -485,6 +501,17 @@ diagnostic visible, mais ne transfère aucune qualité et n'invalide pas à lui
 seul une coordonnée qui satisfait ses propres contrôles : les millésimes et les
 précisions peuvent différer. Un échec de cohérence avec la commune, en revanche,
 écarte la position concernée de la résolution automatique.
+
+La sélection locale est rejouable : elle exige un cycle API et un millésime
+fichier entièrement réconciliés, retient uniquement les occurrences de la
+tentative réussie et rapproche le nombre de choix API, de replis fichier et de
+cas à géocoder avec le nombre total de candidats. Elle n'effectue elle-même
+aucun appel externe.
+
+Après réussite du repli Géoplateforme, cette même sélection est rejouée. Elle
+retient un résultat géocodé utilisable après l'API et le fichier ; sinon elle
+remplace l'attente de géocodage par `POSITION_UNRESOLVED`, sans distance
+inventée.
 
 Le classement brut avec la coordonnée API puis le fichier en repli a donné
 146 166 positions dans le cercle exact, 13 925 hors cercle et 74 absences.

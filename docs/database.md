@@ -2,7 +2,7 @@
 
 > Statut : conception logique du MVP
 >
-> Dernière mise à jour : 21 septembre 2026
+> Dernière mise à jour : 22 septembre 2026
 >
 > SGBD cible : PostgreSQL avec PostGIS
 
@@ -419,6 +419,15 @@ d'affichage peut être résolu depuis l'enseigne, le nom usuel ou la dénominati
 de l'organisme, sans perdre le champ source choisi grâce à la filiation décrite
 plus bas.
 
+La première projection Sirene applique dans l'ordre le premier nom
+d'établissement publié, la première dénomination usuelle de l'unité légale,
+sa dénomination légale, puis un libellé technique utilisant le SIRET. La règle
+et le chemin retenu sont écrits dans `field_lineage`. Elle conserve le type
+d'organisme à `UNKNOWN` : une catégorie juridique seule ne suffit pas encore à
+produire un type commercial fiable. Une tranche d'effectif Sirene connue porte
+la portée `LOCAL`, puisqu'elle appartient à l'établissement ; une tranche
+absente conserve la portée `UNKNOWN`.
+
 Une contrainte unique sur `establishment_id` empêche la création de deux
 prospects pour le même établissement. Lorsqu'un SIRET masqué revient dans une
 collecte, l'identité ramène donc à ce même établissement et à cette même fiche.
@@ -464,6 +473,27 @@ conditions suivantes sont satisfaites :
 Une localisation inconnue ne retire pas le prospect de la base. Elle le place
 dans « Localisation à vérifier » et l'exclut uniquement des filtres exigeant
 une distance connue.
+
+### 8.7 Lecture paginée du catalogue
+
+La première projection de lecture du jalon 6 interroge directement PostgreSQL
+sans recopier la distance. Elle choisit la localisation courante avec priorité
+à la couche `USER`, calcule `ST_DWithin` et `ST_Distance` par rapport à la
+`reference_position` courante, puis applique recherche, filtres, tri, limite et
+décalage côté base. Le rayon de recherche configuré est utilisé lorsqu'aucun
+rayon ponctuel n'est fourni.
+
+La requête ordinaire impose les conditions de visibilité de la section 8.6.
+Une requête distincte par état de localisation sélectionne les fiches
+`TO_VERIFY` ou `MISSING` ; leur distance reste `NULL` et le rayon ne les fait
+jamais entrer ou sortir artificiellement. La page est bornée à 100 lignes et
+retourne un total indépendant de la limite. Le détail charge séparément les
+liens `source_binding` courants afin d'exposer leur fournisseur et leurs dates
+de fraîcheur sans charger l'historique complet des observations.
+
+Les corrections scalaires, contacts et scores ne font pas encore partie du
+schéma exécutable. Leurs filtres ne sont donc pas exposés tant que les tables
+décrites dans ce document ne sont pas matérialisées.
 
 ## 9. Événements et organisateurs
 
@@ -1135,6 +1165,30 @@ commune reçoit `LOCATION_UNKNOWN` et attend le fichier géographique puis, si
 nécessaire, le géocodeur. Aucune de ces décisions intermédiaires ne crée encore
 une fiche.
 
+Après activation du millésime fichier, la résolution déterministe remplace ce
+classement intermédiaire par celui de la position API utilisable ou, à défaut,
+de la position fichier utilisable. Le champ `reason` conserve le code de règle,
+la source et l'identifiant de la `candidate_position` retenue. Si aucune ne
+convient, le classement reste `LOCATION_UNKNOWN`, la distance reste `NULL` et
+le motif devient `POSITION_GEOCODING_REQUIRED`. Les occurrences des tentatives
+abandonnées ne sont pas réécrites.
+
+Le géocodage de repli crée ensuite une observation et une position candidate
+pour chaque occurrence `POSITION_GEOCODING_REQUIRED`, y compris lorsque le
+fournisseur ne trouve aucune adresse. Après succès réconcilié de cette source,
+la résolution est rejouée : une position Géoplateforme utilisable peut être
+retenue après l'API et le fichier ; sinon le motif devient
+`POSITION_UNRESOLVED`. Dans ce dernier cas, le classement reste
+`LOCATION_UNKNOWN` et la distance reste `NULL`.
+
+La projection des prospects lie ensuite `opportunity_id` à chaque occurrence
+conservée et fixe sa décision à `CREATED`, `UPDATED` ou `UNCHANGED`. Une
+occurrence `OUTSIDE_RADIUS` ne crée aucune entité métier et reçoit
+`COUNTED_ONLY`. Le traitement se fait par page et la décision sert de point de
+reprise durable : une page déjà entièrement décidée n'est pas rejouée. La
+raison géographique reste intacte et reçoit seulement un diagnostic de
+projection supplémentaire.
+
 Une diffusion partielle Sirene supprime les `collection_item` identifiants de
 l'objet concerné, y compris leur valeur, leur empreinte et leurs liens. Les
 compteurs agrégés du lot et du cycle peuvent rester ; ils ne permettent pas de
@@ -1154,7 +1208,8 @@ collecte est évaluée séparément. Cette table contient :
 
 - l'occurrence `collection_item` et l'observation source correspondantes ;
 - le millésime de référence lorsqu'il s'agit du fichier mensuel ;
-- l'origine parmi API Sirene, fichier de géolocalisation et futur géocodeur ;
+- l'origine parmi API Sirene, fichier de géolocalisation et géocodeur
+  Géoplateforme ;
 - le point WGS84 contrôlé, éventuellement absent ;
 - le système de coordonnées et le code de qualité propres à cette seule source ;
 - la précision normalisée et l'utilisabilité ;
@@ -1169,6 +1224,14 @@ sa propre occurrence. Les qualités du fichier `11`, `12`, `21`, `22` ou `33`
 ne sont jamais inscrites sur la ligne API. Une qualité `33` peut conserver son
 point comme preuve, mais son classement reste `LOCATION_UNKNOWN`, son
 utilisabilité `TO_VERIFY` et sa distance décisionnelle `NULL`.
+
+Pour le géocodeur, une ligne existe également pour `NOT_FOUND` ou
+`OUTSIDE_METROPOLITAN_FRANCE` : son point est nul, son utilisabilité vaut
+`MISSING` et son diagnostic conserve l'issue. Un résultat ponctuel est
+`USABLE` uniquement pour les types `housenumber` et `street`, après égalité du
+code commune et contrôle du contour avec la marge figée. Les autres résultats
+sont `TO_VERIFY`. Le score est stocké dans le diagnostic, sans gouverner seul
+la sélection.
 
 Cette table représente des candidats à la résolution, pas les localisations
 effectives consultées par l'interface. Après création de la fiche, seule la

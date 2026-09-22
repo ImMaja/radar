@@ -639,10 +639,12 @@ Le connecteur Sirene exécute, dans l'ordre :
 8. résoudre la position selon la règle versionnée, puis géocoder en repli les
    adresses publiques lorsqu'aucun candidat n'est utilisable ;
 9. calculer le classement géographique exact ;
-10. contrôler, après succès de l'énumération, les SIRET connus devenus absents ;
-11. appliquer les changements administratifs ou de diffusion uniquement sur
+10. projeter les candidats dans le rayon et ceux sans position en fiches
+    prospects stables, et comptabiliser sans fiche ceux hors du rayon ;
+11. contrôler, après succès de l'énumération, les SIRET connus devenus absents ;
+12. appliquer les changements administratifs ou de diffusion uniquement sur
     une réponse explicite ;
-12. publier les compteurs et la couverture si toutes les étapes obligatoires
+13. publier les compteurs et la couverture si toutes les étapes obligatoires
     réussissent.
 
 Le téléchargement du fichier géographique et l'appel de l'API possèdent des
@@ -709,6 +711,83 @@ de rue. Un écart entre les sources supérieur à un kilomètre produit un
 diagnostic visible, sans invalider à lui seul deux points cohérents avec leur
 commune ; un point qui échoue au contrôle communal est écarté. La marge et la
 règle de résolution sont versionnées et ne sont pas des réglages utilisateur.
+
+La première passe de résolution est locale et transactionnelle. Elle exige que
+les exécutions API et fichier du cycle soient toutes deux `SUCCEEDED`, ne lit
+que les occurrences de la tentative API qui a terminé chaque lot, puis reporte
+sur `collection_item` le classement et la distance du candidat choisi. Si ni
+l'API ni le fichier ne sont utilisables, elle conserve `LOCATION_UNKNOWN` et
+le motif `POSITION_GEOCODING_REQUIRED`. Cette passe ne crée pas encore de
+fiche, n'appelle pas le fournisseur de géocodage et peut être rejouée sans
+ajouter de ligne.
+
+Le repli suivant ne charge que ces occurrences
+`POSITION_GEOCODING_REQUIRED`. Il construit l'adresse publique depuis
+l'observation Sirene, appelle l'adaptateur Géoplateforme séquentiellement à au
+plus 20 requêtes par seconde et persiste chaque résultat avant l'appel suivant.
+Son `collection_source_run` est propre au cycle : après une interruption
+temporaire, les résultats déjà enregistrés ne sont pas redemandés. Une réponse
+ne devient `USABLE` que si elle est de type `housenumber` ou `street`, porte le
+code commune attendu et se trouve dans le contour de cette commune ou sa marge
+figée. Le score fournisseur est conservé comme preuve, sans seuil de sélection
+implicite. Une réponse communale, incohérente ou absente reste respectivement
+`TO_VERIFY` ou `MISSING`.
+
+Le repli ne passe à `SUCCEEDED` qu'après rapprochement du nombre d'adresses à
+traiter et des positions candidates persistées. La résolution déterministe est
+alors rejouée : elle conserve la priorité API puis fichier, sélectionne ensuite
+le géocodeur utilisable et transforme tout dernier cas sans candidat fiable en
+`POSITION_UNRESOLVED`. Sa distance demeure `NULL` et il reste destiné à
+« Localisation à vérifier ».
+
+La projection métier suivante est bornée par page Sirene et chaque page forme
+une transaction indépendante. Elle ne traite que les occurrences de la
+tentative ayant terminé le lot et exige les trois sources géographiques
+réconciliées. `IN_RADIUS` et `LOCATION_UNKNOWN` créent ou actualisent le même
+établissement grâce au SIRET ; `OUTSIDE_RADIUS` devient `COUNTED_ONLY` sans
+entité métier. L'opération crée séparément l'organisme juridique, le site local,
+la racine de fiche, le prospect, son lien source, la présence du cycle, la
+filiation scalaire et la localisation source courante. Une reprise ignore les
+pages déjà décidées et ne touche jamais au masquage de la fiche.
+
+Le nom source initial retient dans l'ordre le premier nom d'établissement, la
+première dénomination usuelle de l'unité légale, sa dénomination légale, puis un
+libellé technique fondé sur le SIRET. Le type d'organisme n'est pas déduit de
+la seule catégorie juridique : il reste `UNKNOWN` jusqu'à l'introduction d'un
+mapping métier validé. Les candidats Sirene de cette sélection sont actifs, en
+diffusion totale et initialement `ELIGIBLE` ; une transition future de ces
+états relève du chemin de conformité distinct.
+
+La lecture locale expose maintenant `GET /api/v1/prospects` et
+`GET /api/v1/prospects/{id}` derrière la session privée. La liste applique par
+défaut le rayon de recherche courant ; un rayon ponctuel entre 1 mètre et
+50 kilomètres peut le réduire ou l'étendre sans modifier les réglages ni
+déclencher une collecte. PostgreSQL applique la recherche par nom, raison
+sociale, SIRET, commune ou code postal, les filtres de type, activité et
+tranche d'effectif, les tris par distance ou nom et la pagination bornée à
+100 lignes. La distance est calculée par PostGIS depuis la position de
+référence courante et n'est pas persistée sur la fiche.
+
+La liste ordinaire ne retient que les fiches visibles, éligibles, en diffusion
+totale et rattachées à des entités administrativement actives. Le mode
+`to_verify` constitue la première lecture de « Localisation à vérifier » : il
+retourne les adresses sans point utilisable, avec une distance nulle, sans les
+faire satisfaire artificiellement à un rayon. La fiche détaillée restitue
+l'identité publique, l'adresse et la qualité de position courantes, ainsi que
+la provenance et la fraîcheur du lien source. Ces deux routes ne contactent
+jamais Sirene ni la Géoplateforme. Les filtres de contacts et le tri par score
+seront ajoutés avec leurs projections respectives plutôt que simulés par des
+valeurs absentes.
+
+L'interface React conserve une navigation interne minimale, sans bibliothèque
+de routage : « Prospects » et « Réglages ». Le catalogue n'est monté que dans
+sa vue et ne lance aucune requête tant qu'aucune adresse de référence n'est
+confirmée. Les filtres sont appliqués explicitement afin de ne pas interroger
+la base à chaque frappe. La pagination reste serveur ; le navigateur ne charge
+jamais le catalogue complet. La vue « Localisation à vérifier » retire le
+filtre de distance et trie par nom par défaut. Ouvrir une fiche déclenche une
+lecture de détail séparée, puis affiche l'identité publique, la localisation et
+la fraîcheur des sources sans charger l'historique brut.
 
 Les lots Sirene utilisent initialement 30 codes commune au maximum, des pages
 de 1 000 éléments et une concurrence de un. Ces paramètres sont configurables

@@ -36,10 +36,26 @@ puis joint uniquement les SIRET du cycle par lots bornés avec DuckDB, sans
 charger les 38 millions de lignes en mémoire. Ses positions sont persistées
 avec un millésime et une qualité propres, contrôlées par PostGIS et activées
 seulement après réconciliation complète ; une qualité communale `33` reste à
-vérifier. Le vrai millésime 2026 et la sélection autour de Dax ont été validés.
-Le connecteur reste désactivé jusqu'au choix de la position effective, à la
-création des prospects et à la résolution du point de conformité sur la
-diffusion partielle.
+vérifier. La résolution déterministe retient maintenant la position API
+utilisable, puis le fichier, et conserve les écarts entre sources supérieurs à
+un kilomètre. Le repli Géoplateforme des seules adresses encore indéterminées
+est persistant et rejouable : chaque résultat possède sa provenance, passe les
+contrôles PostGIS et n'est retenu automatiquement que s'il localise une adresse
+ou une voie dans la commune attendue. Une absence ou un résultat insuffisant
+reste explicitement sans position. Les résultats finaux sont maintenant
+projetés page par page en organismes, établissements et fiches prospects
+stables liées au SIRET. Les candidats hors du rayon exact sont comptabilisés
+sans créer de fiche ; ceux dont la position reste inconnue sont conservés pour
+la liste « Localisation à vérifier ». Une API privée permet désormais de
+rechercher et paginer les prospects locaux, de les filtrer par rayon, type,
+activité, effectif et état de localisation, de les trier par nom ou distance,
+puis d'ouvrir leur détail avec la provenance courante. Toutes ces lectures
+restent dans PostgreSQL/PostGIS et n'appellent aucun fournisseur. L'interface
+React propose la même liste paginée, les filtres, l'onglet « Localisation à
+vérifier » et la fiche détaillée avec ses sources. Le vrai millésime 2026 et la
+sélection autour de Dax ont été validés. Le connecteur reste désactivé jusqu'à
+la composition complète du worker et à la résolution du point de conformité
+sur la diffusion partielle.
 
 Le MVP est prévu pour un seul utilisateur et un seul food truck. Il sera
 accessible sur Internet derrière une authentification, sans exposer

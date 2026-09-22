@@ -174,8 +174,5 @@ def downgrade() -> None:
         )
         """
     )
-    op.execute(
-        "DELETE FROM source_observation "
-        "WHERE data_source_code = 'SIRENE_GEOLOCATION'"
-    )
+    op.execute("DELETE FROM source_observation WHERE data_source_code = 'SIRENE_GEOLOCATION'")
     op.execute("DELETE FROM data_source WHERE code = 'SIRENE_GEOLOCATION'")

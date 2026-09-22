@@ -20,7 +20,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -121,7 +122,18 @@ input {
   background: #fffefb;
 }
 
-input:focus {
+select {
+  width: 100%;
+  min-height: 3.2rem;
+  padding: 0.7rem 2.4rem 0.7rem 0.9rem;
+  border: 1px solid #a8b5ad;
+  border-radius: 0.65rem;
+  color: #18312b;
+  background: #fffefb;
+}
+
+input:focus,
+select:focus {
   border-color: #b55f2b;
   outline: 3px solid rgb(181 95 43 / 16%);
 }
@@ -153,6 +165,49 @@ button.secondary {
   box-shadow: inset 0 0 0 1px #8fa098;
 }
 
+.app-navigation {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin: -2rem 0 2.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgb(23 53 45 / 14%);
+}
+
+.view-tabs {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.view-tabs button,
+.catalog-tabs button,
+.text-button {
+  min-height: auto;
+  margin: 0;
+  padding: 0.65rem 0.9rem;
+  color: #52635c;
+  background: transparent;
+}
+
+.view-tabs button:hover,
+.catalog-tabs button:hover,
+.text-button:hover {
+  color: #18312b;
+  background: rgb(255 253 247 / 70%);
+}
+
+.view-tabs button.active,
+.catalog-tabs button.active {
+  color: #fff;
+  background: #17352d;
+}
+
+.logout-button {
+  min-height: auto;
+  margin: 0;
+}
+
 .private-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.85fr);
@@ -163,6 +218,280 @@ button.secondary {
 .settings-stack {
   display: grid;
   gap: 2rem;
+}
+
+.catalog,
+.catalog-detail {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.catalog-panel {
+  max-width: 44rem;
+}
+
+.catalog-heading {
+  display: flex;
+  gap: 2rem;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.catalog-heading .hint {
+  margin-bottom: 0;
+}
+
+.catalog-count {
+  display: grid;
+  min-width: 6rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid rgb(23 53 45 / 12%);
+  border-radius: 0.9rem;
+  background: rgb(255 253 247 / 72%);
+  text-align: center;
+}
+
+.catalog-count strong {
+  font-family: Georgia, serif;
+  font-size: 1.55rem;
+}
+
+.catalog-count span {
+  color: #66736d;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.catalog-tabs {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.35rem;
+  border-radius: 0.8rem;
+  background: rgb(23 53 45 / 7%);
+}
+
+.catalog-tabs button {
+  flex: 1;
+}
+
+.catalog-filters {
+  gap: 1rem;
+  margin: 0;
+  padding: 1.25rem;
+  border: 1px solid rgb(23 53 45 / 12%);
+  border-radius: 1rem;
+  background: rgb(255 253 247 / 82%);
+}
+
+.filter-primary,
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem 1rem;
+}
+
+.filter-primary > div,
+.filter-grid > div {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.catalog-filters label {
+  margin-top: 0;
+}
+
+.catalog-filters details {
+  padding-top: 0.25rem;
+}
+
+.catalog-filters summary {
+  color: #52635c;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.filter-grid {
+  margin-top: 1rem;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.filter-actions button {
+  margin-top: 0;
+}
+
+.prospect-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.prospect-card {
+  display: flex;
+  min-width: 0;
+  min-height: 16rem;
+  padding: 1.25rem;
+  border: 1px solid rgb(23 53 45 / 13%);
+  border-radius: 1rem;
+  background: rgb(255 253 247 / 88%);
+  box-shadow: 0 0.8rem 2rem rgb(32 54 45 / 6%);
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.prospect-card h3 {
+  margin: 0.45rem 0;
+  font-family: Georgia, serif;
+  font-size: 1.35rem;
+}
+
+.prospect-card > div > p:not(.prospect-meta) {
+  color: #5c6b64;
+  line-height: 1.5;
+}
+
+.prospect-card button {
+  width: 100%;
+}
+
+.prospect-meta {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+  color: #66736d;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.prospect-signals {
+  display: flex;
+  gap: 0.45rem;
+  padding: 0;
+  list-style: none;
+  flex-wrap: wrap;
+}
+
+.prospect-signals li {
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  color: #4e6158;
+  background: #edf2ed;
+  font-size: 0.75rem;
+}
+
+.empty-state {
+  padding: 2.5rem;
+  border: 1px dashed #a8b5ad;
+  border-radius: 1rem;
+  color: #66736d;
+  text-align: center;
+}
+
+.empty-state h3 {
+  margin-top: 0;
+  color: #18312b;
+  font-family: Georgia, serif;
+}
+
+.pagination {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.pagination button {
+  margin: 0;
+}
+
+.pagination span {
+  color: #66736d;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.catalog-detail > .text-button {
+  justify-self: start;
+}
+
+.detail-card {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.detail-card h2 {
+  margin-bottom: 0;
+}
+
+.detail-address {
+  color: #5c6b64;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2rem;
+}
+
+.detail-grid h3,
+.provenance h3 {
+  font-family: Georgia, serif;
+}
+
+.facts {
+  display: grid;
+  gap: 0.8rem;
+  margin: 0;
+}
+
+.facts div {
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid rgb(23 53 45 / 9%);
+}
+
+.facts dt {
+  color: #66736d;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.facts dd {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.provenance {
+  padding-top: 1rem;
+  border-top: 1px solid rgb(23 53 45 / 12%);
+}
+
+.provenance ul {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.provenance li {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.9rem;
+  border-radius: 0.75rem;
+  background: #edf4ee;
+}
+
+.provenance span,
+.provenance small {
+  color: #66736d;
 }
 
 .welcome {
@@ -355,8 +684,28 @@ button.secondary {
 
   .field-pair,
   .candidate dl,
-  .connector-card dl {
+  .connector-card dl,
+  .filter-primary,
+  .filter-grid,
+  .prospect-list,
+  .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .app-navigation,
+  .catalog-heading,
+  .pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .logout-button {
+    align-self: start;
+  }
+
+  .catalog-tabs,
+  .filter-actions {
+    flex-direction: column;
   }
 
   .welcome {

@@ -20,6 +20,8 @@ from radar.persistence.auth import SqlAlchemyAuthRepository
 from radar.persistence.collections import SqlAlchemyCollectionRepository
 from radar.persistence.database import Database
 from radar.persistence.geography import SqlAlchemyGeographyRepository
+from radar.persistence.prospect_catalog import SqlAlchemyProspectCatalogRepository
+from radar.prospects.catalog import ProspectCatalogBackend, UnavailableProspectCatalogBackend
 from radar.providers.geoplatform import GeoPlatformGeocoder
 from radar.web.auth import router as auth_router
 from radar.web.collections import router as collections_router
@@ -28,6 +30,7 @@ from radar.web.geography import router as geography_router
 from radar.web.health import ReadinessProbe
 from radar.web.health import router as health_router
 from radar.web.middleware import add_security_headers
+from radar.web.prospects import router as prospects_router
 
 
 def create_app(
@@ -37,6 +40,7 @@ def create_app(
     login_rate_limiter: LoginRateLimiter | None = None,
     geography_backend: GeographyBackend | None = None,
     collection_backend: CollectionBackend | None = None,
+    prospect_backend: ProspectCatalogBackend | None = None,
 ) -> FastAPI:
     """Build one Radar web process with explicit dependencies."""
 
@@ -71,6 +75,12 @@ def create_app(
             if owned_database is not None
             else UnavailableCollectionBackend()
         )
+    if prospect_backend is None:
+        prospect_backend = (
+            SqlAlchemyProspectCatalogRepository(owned_database.engine)
+            if owned_database is not None
+            else UnavailableProspectCatalogBackend()
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -100,10 +110,12 @@ def create_app(
     app.state.login_rate_limiter = login_rate_limiter or LoginRateLimiter()
     app.state.geography_backend = geography_backend
     app.state.collection_backend = collection_backend
+    app.state.prospect_backend = prospect_backend
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(geography_router)
     app.include_router(collections_router)
+    app.include_router(prospects_router)
     if resolved_settings.frontend_directory.joinpath("index.html").is_file():
         app.mount(
             "/",

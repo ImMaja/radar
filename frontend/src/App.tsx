@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 import {
   ApiError,
@@ -19,6 +19,7 @@ import {
   type SessionView,
   updateGeographyRadii,
 } from "./api";
+import { ProspectCatalog } from "./ProspectCatalog";
 
 type AppState =
   | { phase: "loading" }
@@ -53,6 +54,15 @@ export function App() {
   const [collections, setCollections] = useState<CollectionDashboardView | null>(null);
   const [candidate, setCandidate] = useState<ReferencePositionView | null>(null);
   const [geographyBusy, setGeographyBusy] = useState(false);
+  const [activeView, setActiveView] = useState<"prospects" | "settings">("settings");
+  const openSettings = useCallback(() => setActiveView("settings"), []);
+  const handleAuthenticationRequired = useCallback(() => {
+    setState({ phase: "anonymous" });
+    setGeography(null);
+    setCollections(null);
+    setCandidate(null);
+    setActiveView("settings");
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -157,6 +167,7 @@ export function App() {
       setGeography(null);
       setCollections(null);
       setCandidate(null);
+      setActiveView("settings");
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         setState({ phase: "anonymous" });
@@ -279,261 +290,301 @@ export function App() {
       )}
 
       {state.phase === "authenticated" && (
-        <div className="private-layout">
-          <section className="welcome" aria-labelledby="welcome-title">
-            <p className="section-label">Session active</p>
-            <h2 id="welcome-title">
-              {state.session.display_name
-                ? `Bonjour ${state.session.display_name}`
-                : "Bienvenue dans Radar"}
-            </h2>
-            <p>
-              Définissez le centre des futures collectes. Les opportunités seront ajoutées dans les
-              prochains jalons.
-            </p>
-            <button className="secondary" type="button" onClick={submitLogout}>
+        <>
+          <nav className="app-navigation" aria-label="Navigation principale">
+            <div className="view-tabs">
+              <button
+                type="button"
+                className={activeView === "prospects" ? "active" : ""}
+                aria-current={activeView === "prospects" ? "page" : undefined}
+                onClick={() => setActiveView("prospects")}
+              >
+                Prospects
+              </button>
+              <button
+                type="button"
+                className={activeView === "settings" ? "active" : ""}
+                aria-current={activeView === "settings" ? "page" : undefined}
+                onClick={() => setActiveView("settings")}
+              >
+                Réglages
+              </button>
+            </div>
+            <button className="secondary logout-button" type="button" onClick={submitLogout}>
               Se déconnecter
             </button>
-          </section>
+          </nav>
 
-          <div className="settings-stack">
-            <section className="panel" aria-labelledby="geography-title">
-              <p className="section-label">Zone de travail</p>
-              <h2 id="geography-title">Adresse de référence</h2>
+          {activeView === "prospects" ? (
+            <ProspectCatalog
+              hasReferencePosition={Boolean(geography?.reference_position)}
+              configuredRadiusMeters={geography?.search_radius_meters ?? 50_000}
+              onConfigure={openSettings}
+              onAuthenticationRequired={handleAuthenticationRequired}
+            />
+          ) : (
+            <div className="private-layout">
+              <section className="welcome" aria-labelledby="welcome-title">
+                <p className="section-label">Session active</p>
+                <h2 id="welcome-title">
+                  {state.session.display_name
+                    ? `Bonjour ${state.session.display_name}`
+                    : "Bienvenue dans Radar"}
+                </h2>
+                <p>
+                  Définissez la zone de travail, contrôlez les collectes et gérez l’accès privé.
+                </p>
+              </section>
 
-              {geography === null ? (
-                <p className="loading">Chargement des réglages…</p>
-              ) : (
-                <>
-                  {geography.reference_position ? (
-                    <div className="current-position">
-                      <span>Position actuelle</span>
-                      <strong>{geography.reference_position.normalized_label}</strong>
-                      <small>
-                        {geography.reference_position.latitude.toFixed(6)},{" "}
-                        {geography.reference_position.longitude.toFixed(6)} · code commune{" "}
-                        {geography.reference_position.municipality_code}
-                      </small>
-                      <small>Source : {geography.reference_position.provider_name}</small>
-                    </div>
+              <div className="settings-stack">
+                <section className="panel" aria-labelledby="geography-title">
+                  <p className="section-label">Zone de travail</p>
+                  <h2 id="geography-title">Adresse de référence</h2>
+
+                  {geography === null ? (
+                    <p className="loading">Chargement des réglages…</p>
                   ) : (
-                    <p className="hint">Aucune adresse n’est encore confirmée.</p>
-                  )}
+                    <>
+                      {geography.reference_position ? (
+                        <div className="current-position">
+                          <span>Position actuelle</span>
+                          <strong>{geography.reference_position.normalized_label}</strong>
+                          <small>
+                            {geography.reference_position.latitude.toFixed(6)},{" "}
+                            {geography.reference_position.longitude.toFixed(6)} · code commune{" "}
+                            {geography.reference_position.municipality_code}
+                          </small>
+                          <small>Source : {geography.reference_position.provider_name}</small>
+                        </div>
+                      ) : (
+                        <p className="hint">Aucune adresse n’est encore confirmée.</p>
+                      )}
 
-                  <form onSubmit={submitAddress}>
-                    <label htmlFor="address">
-                      {geography.reference_position ? "Rechercher une autre adresse" : "Adresse"}
-                    </label>
-                    <input
-                      id="address"
-                      name="address"
-                      type="text"
-                      autoComplete="street-address"
-                      minLength={3}
-                      maxLength={300}
-                      placeholder="12 rue Saint-Pierre, 40100 Dax"
-                      required
-                    />
-                    <button type="submit" disabled={geographyBusy}>
-                      Vérifier l’adresse
-                    </button>
-                  </form>
-
-                  {candidate && (
-                    <article className="candidate" aria-labelledby="candidate-title">
-                      <p className="section-label">Résultat à confirmer</p>
-                      <h3 id="candidate-title">{candidate.normalized_label}</h3>
-                      <dl>
-                        <div>
-                          <dt>Commune</dt>
-                          <dd>{candidate.structured_address.city ?? "Non indiquée"}</dd>
-                        </div>
-                        <div>
-                          <dt>Coordonnées</dt>
-                          <dd>
-                            {candidate.latitude.toFixed(6)}, {candidate.longitude.toFixed(6)}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Confiance</dt>
-                          <dd>
-                            {candidate.score === null
-                              ? "Non indiquée"
-                              : `${Math.round(candidate.score * 100)} %`}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Source</dt>
-                          <dd>{candidate.provider_name}</dd>
-                        </div>
-                      </dl>
-                      <p className="hint">
-                        Vérifiez ce libellé et ces coordonnées avant de les utiliser comme centre.
-                      </p>
-                      <button type="button" onClick={confirmCandidate} disabled={geographyBusy}>
-                        Confirmer cette position
-                      </button>
-                    </article>
-                  )}
-
-                  <form className="radii-form" onSubmit={submitRadii}>
-                    <div className="field-pair">
-                      <div>
-                        <label htmlFor="collectionRadius">Rayon de collecte (km)</label>
+                      <form onSubmit={submitAddress}>
+                        <label htmlFor="address">
+                          {geography.reference_position
+                            ? "Rechercher une autre adresse"
+                            : "Adresse"}
+                        </label>
                         <input
-                          key={`collection-${geography.collection_radius_meters}`}
-                          id="collectionRadius"
-                          name="collectionRadius"
-                          type="number"
-                          min="0.001"
-                          max="50"
-                          step="0.001"
-                          defaultValue={geography.collection_radius_meters / 1000}
+                          id="address"
+                          name="address"
+                          type="text"
+                          autoComplete="street-address"
+                          minLength={3}
+                          maxLength={300}
+                          placeholder="12 rue Saint-Pierre, 40100 Dax"
                           required
                         />
-                      </div>
-                      <div>
-                        <label htmlFor="searchRadius">Rayon de recherche (km)</label>
-                        <input
-                          key={`search-${geography.search_radius_meters}`}
-                          id="searchRadius"
-                          name="searchRadius"
-                          type="number"
-                          min="0.001"
-                          max="50"
-                          step="0.001"
-                          defaultValue={geography.search_radius_meters / 1000}
-                          required
-                        />
-                      </div>
-                    </div>
-                    <button type="submit" className="secondary" disabled={geographyBusy}>
-                      Enregistrer les rayons
-                    </button>
-                  </form>
+                        <button type="submit" disabled={geographyBusy}>
+                          Vérifier l’adresse
+                        </button>
+                      </form>
 
-                  {!geography.reference_position && (
-                    <p className="coverage-warning" role="status">
-                      Confirmez d’abord une adresse pour définir le centre des futures collectes.
-                    </p>
-                  )}
-                </>
-              )}
-            </section>
+                      {candidate && (
+                        <article className="candidate" aria-labelledby="candidate-title">
+                          <p className="section-label">Résultat à confirmer</p>
+                          <h3 id="candidate-title">{candidate.normalized_label}</h3>
+                          <dl>
+                            <div>
+                              <dt>Commune</dt>
+                              <dd>{candidate.structured_address.city ?? "Non indiquée"}</dd>
+                            </div>
+                            <div>
+                              <dt>Coordonnées</dt>
+                              <dd>
+                                {candidate.latitude.toFixed(6)}, {candidate.longitude.toFixed(6)}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Confiance</dt>
+                              <dd>
+                                {candidate.score === null
+                                  ? "Non indiquée"
+                                  : `${Math.round(candidate.score * 100)} %`}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Source</dt>
+                              <dd>{candidate.provider_name}</dd>
+                            </div>
+                          </dl>
+                          <p className="hint">
+                            Vérifiez ce libellé et ces coordonnées avant de les utiliser comme
+                            centre.
+                          </p>
+                          <button type="button" onClick={confirmCandidate} disabled={geographyBusy}>
+                            Confirmer cette position
+                          </button>
+                        </article>
+                      )}
 
-            <section className="panel" aria-labelledby="collections-title">
-              <p className="section-label">Synchronisation</p>
-              <h2 id="collections-title">Collectes</h2>
-              <p className="hint">
-                Chaque source travaille en arrière-plan sur une copie du centre et du rayon actuels.
-              </p>
-              {collections === null ? (
-                <p className="loading">Chargement de l’état des collectes…</p>
-              ) : (
-                <div className="connector-list">
-                  {collections.connectors.map((connector) => {
-                    const job = connector.active_job ?? connector.latest_job;
-                    return (
-                      <article className="connector-card" key={connector.connector}>
-                        <div className="connector-heading">
-                          <h3>{connector.connector === "SIRENE" ? "Sirene" : "DATAtourisme"}</h3>
-                          <span className={`status status-${job?.state.toLowerCase() ?? "empty"}`}>
-                            {job ? stateLabels[job.state] : "Jamais collectée"}
-                          </span>
+                      <form className="radii-form" onSubmit={submitRadii}>
+                        <div className="field-pair">
+                          <div>
+                            <label htmlFor="collectionRadius">Rayon de collecte (km)</label>
+                            <input
+                              key={`collection-${geography.collection_radius_meters}`}
+                              id="collectionRadius"
+                              name="collectionRadius"
+                              type="number"
+                              min="0.001"
+                              max="50"
+                              step="0.001"
+                              defaultValue={geography.collection_radius_meters / 1000}
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor="searchRadius">Rayon de recherche (km)</label>
+                            <input
+                              key={`search-${geography.search_radius_meters}`}
+                              id="searchRadius"
+                              name="searchRadius"
+                              type="number"
+                              min="0.001"
+                              max="50"
+                              step="0.001"
+                              defaultValue={geography.search_radius_meters / 1000}
+                              required
+                            />
+                          </div>
                         </div>
-                        <dl>
-                          <div>
-                            <dt>Dernier succès</dt>
-                            <dd>{formatDate(connector.last_success_at)}</dd>
-                          </div>
-                          <div>
-                            <dt>Couverture</dt>
-                            <dd>
-                              {connector.coverage === null
-                                ? "Non établie"
-                                : connector.coverage.search_circle_covered
-                                  ? "Recherche couverte"
-                                  : "Zone actuelle non couverte"}
-                            </dd>
-                          </div>
-                          {job && (
-                            <>
+                        <button type="submit" className="secondary" disabled={geographyBusy}>
+                          Enregistrer les rayons
+                        </button>
+                      </form>
+
+                      {!geography.reference_position && (
+                        <p className="coverage-warning" role="status">
+                          Confirmez d’abord une adresse pour définir le centre des futures
+                          collectes.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </section>
+
+                <section className="panel" aria-labelledby="collections-title">
+                  <p className="section-label">Synchronisation</p>
+                  <h2 id="collections-title">Collectes</h2>
+                  <p className="hint">
+                    Chaque source travaille en arrière-plan sur une copie du centre et du rayon
+                    actuels.
+                  </p>
+                  {collections === null ? (
+                    <p className="loading">Chargement de l’état des collectes…</p>
+                  ) : (
+                    <div className="connector-list">
+                      {collections.connectors.map((connector) => {
+                        const job = connector.active_job ?? connector.latest_job;
+                        return (
+                          <article className="connector-card" key={connector.connector}>
+                            <div className="connector-heading">
+                              <h3>
+                                {connector.connector === "SIRENE" ? "Sirene" : "DATAtourisme"}
+                              </h3>
+                              <span
+                                className={`status status-${job?.state.toLowerCase() ?? "empty"}`}
+                              >
+                                {job ? stateLabels[job.state] : "Jamais collectée"}
+                              </span>
+                            </div>
+                            <dl>
                               <div>
-                                <dt>Étape</dt>
-                                <dd>{job.progress.stage}</dd>
+                                <dt>Dernier succès</dt>
+                                <dd>{formatDate(connector.last_success_at)}</dd>
                               </div>
                               <div>
-                                <dt>Tentatives</dt>
+                                <dt>Couverture</dt>
                                 <dd>
-                                  {job.attempt_count} / {job.max_attempts}
+                                  {connector.coverage === null
+                                    ? "Non établie"
+                                    : connector.coverage.search_circle_covered
+                                      ? "Recherche couverte"
+                                      : "Zone actuelle non couverte"}
                                 </dd>
                               </div>
-                            </>
-                          )}
-                        </dl>
-                        {job?.last_error && (
-                          <p className="collection-error">{job.last_error.message}</p>
-                        )}
-                        <button
-                          type="button"
-                          className="secondary"
-                          disabled={
-                            geographyBusy ||
-                            !connector.available ||
-                            geography?.reference_position === null
-                          }
-                          onClick={() => startCollection(connector.connector)}
-                        >
-                          {connector.available ? "Actualiser maintenant" : "Connecteur à venir"}
-                        </button>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
+                              {job && (
+                                <>
+                                  <div>
+                                    <dt>Étape</dt>
+                                    <dd>{job.progress.stage}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Tentatives</dt>
+                                    <dd>
+                                      {job.attempt_count} / {job.max_attempts}
+                                    </dd>
+                                  </div>
+                                </>
+                              )}
+                            </dl>
+                            {job?.last_error && (
+                              <p className="collection-error">{job.last_error.message}</p>
+                            )}
+                            <button
+                              type="button"
+                              className="secondary"
+                              disabled={
+                                geographyBusy ||
+                                !connector.available ||
+                                geography?.reference_position === null
+                              }
+                              onClick={() => startCollection(connector.connector)}
+                            >
+                              {connector.available ? "Actualiser maintenant" : "Connecteur à venir"}
+                            </button>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
 
-            <section className="panel" aria-labelledby="password-title">
-              <p className="section-label">Réglages du compte</p>
-              <h2 id="password-title">Changer le mot de passe</h2>
-              <p className="hint">Utilisez une phrase d’au moins 15 caractères.</p>
-              <form onSubmit={submitPasswordChange}>
-                <label htmlFor="currentPassword">Mot de passe actuel</label>
-                <input
-                  id="currentPassword"
-                  name="currentPassword"
-                  type="password"
-                  autoComplete="current-password"
-                  maxLength={128}
-                  required
-                />
+                <section className="panel" aria-labelledby="password-title">
+                  <p className="section-label">Réglages du compte</p>
+                  <h2 id="password-title">Changer le mot de passe</h2>
+                  <p className="hint">Utilisez une phrase d’au moins 15 caractères.</p>
+                  <form onSubmit={submitPasswordChange}>
+                    <label htmlFor="currentPassword">Mot de passe actuel</label>
+                    <input
+                      id="currentPassword"
+                      name="currentPassword"
+                      type="password"
+                      autoComplete="current-password"
+                      maxLength={128}
+                      required
+                    />
 
-                <label htmlFor="newPassword">Nouveau mot de passe</label>
-                <input
-                  id="newPassword"
-                  name="newPassword"
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={15}
-                  maxLength={128}
-                  required
-                />
+                    <label htmlFor="newPassword">Nouveau mot de passe</label>
+                    <input
+                      id="newPassword"
+                      name="newPassword"
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={15}
+                      maxLength={128}
+                      required
+                    />
 
-                <label htmlFor="confirmation">Confirmer le nouveau mot de passe</label>
-                <input
-                  id="confirmation"
-                  name="confirmation"
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={15}
-                  maxLength={128}
-                  required
-                />
-                <button type="submit">Enregistrer le nouveau mot de passe</button>
-              </form>
-            </section>
-          </div>
-        </div>
+                    <label htmlFor="confirmation">Confirmer le nouveau mot de passe</label>
+                    <input
+                      id="confirmation"
+                      name="confirmation"
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={15}
+                      maxLength={128}
+                      required
+                    />
+                    <button type="submit">Enregistrer le nouveau mot de passe</button>
+                  </form>
+                </section>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </main>
   );

@@ -231,9 +231,7 @@ class SireneGeolocationImportService:
         if release.status == "SUCCEEDED":
             return self._backend.completed_scan(reservation, release)
         if release.status != "RUNNING":
-            raise SireneGeolocationImportError(
-                "Sirene geolocation source run is not restartable"
-            )
+            raise SireneGeolocationImportError("Sirene geolocation source run is not restartable")
 
         targets_by_siret = {target.siret: target for target in targets}
 

@@ -279,4 +279,24 @@ describe("authentication interface", () => {
       }),
     );
   });
+
+  it("opens the prospect catalogue without querying it before an address is confirmed", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(session))
+      .mockResolvedValueOnce(response(geography))
+      .mockResolvedValueOnce(response(collections));
+    render(<App />);
+    await screen.findByText("Bonjour Radar");
+
+    fireEvent.click(screen.getByRole("button", { name: "Prospects" }));
+
+    expect(await screen.findByRole("heading", { name: "Catalogue local" })).toBeInTheDocument();
+    expect(screen.getByText(/Confirmez une adresse de référence/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    fireEvent.click(screen.getByRole("button", { name: "Configurer l’adresse" }));
+    expect(
+      await screen.findByRole("heading", { name: "Adresse de référence" }),
+    ).toBeInTheDocument();
+  });
 });

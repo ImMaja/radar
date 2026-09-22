@@ -166,16 +166,13 @@ def _schema(connection: duckdb.DuckDBPyConnection, path: Path) -> dict[str, str]
     missing = REQUIRED_COLUMNS - schema.keys()
     if missing:
         raise SireneGeolocationFileError(
-            "Sirene geolocation schema is missing required columns: "
-            + ", ".join(sorted(missing))
+            "Sirene geolocation schema is missing required columns: " + ", ".join(sorted(missing))
         )
     invalid_text = sorted(
         column for column in TEXT_COLUMNS if not schema[column].startswith("VARCHAR")
     )
     invalid_numeric = sorted(
-        column
-        for column in NUMERIC_COLUMNS
-        if not schema[column].startswith(_NUMERIC_DUCKDB_TYPES)
+        column for column in NUMERIC_COLUMNS if not schema[column].startswith(_NUMERIC_DUCKDB_TYPES)
     )
     if invalid_text or invalid_numeric:
         invalid = ", ".join(invalid_text + invalid_numeric)
@@ -232,9 +229,7 @@ def inspect_sirene_geolocation_file(
                 [str(path)],
             ).fetchone()
             if count_row is None:
-                raise SireneGeolocationFileError(
-                    "Sirene geolocation file row count is unavailable"
-                )
+                raise SireneGeolocationFileError("Sirene geolocation file row count is unavailable")
             source_row_count = cast(int, count_row[0])
             if source_row_count < 1:
                 raise SireneGeolocationFileError("Sirene geolocation file has no rows")
@@ -268,9 +263,7 @@ def _ensure_file_unchanged(file: SireneGeolocationFile) -> None:
     identity = (file_stat.st_size, file_stat.st_dev, file_stat.st_ino, file_stat.st_mtime_ns)
     expected = (file.file_size_bytes, file.device, file.inode, file.modified_at_ns)
     if identity != expected:
-        raise SireneGeolocationFileError(
-            "Sirene geolocation file changed during its scan"
-        )
+        raise SireneGeolocationFileError("Sirene geolocation file changed during its scan")
 
 
 def scan_sirene_geolocation_file(

@@ -503,6 +503,10 @@ class ExternalIdentityModel(Base):
             "fingerprint_algorithm = 'SHA-256'",
             name="ck_external_identity_fingerprint_algorithm",
         ),
+        CheckConstraint(
+            "num_nonnulls(organization_id, establishment_id, opportunity_id) <= 1",
+            name="ck_external_identity_single_target",
+        ),
         Index(
             "uq_external_identity_authority_namespace_fingerprint",
             "authority",
@@ -521,6 +525,21 @@ class ExternalIdentityModel(Base):
     first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     restricted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    organization_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("organization.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    establishment_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("establishment.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    opportunity_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("opportunity.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
 
 
 class SourceObservationModel(Base):
@@ -551,6 +570,12 @@ class SourceObservationModel(Base):
         Uuid(as_uuid=True),
         ForeignKey("external_identity.id", ondelete="RESTRICT"),
         nullable=True,
+    )
+    source_binding_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_binding.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
     )
     collection_cycle_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
@@ -668,6 +693,12 @@ class CollectionItemModel(Base):
         ForeignKey("source_observation.id", ondelete="RESTRICT"),
         nullable=True,
     )
+    opportunity_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("opportunity.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     normalization_result: Mapped[str] = mapped_column(String(32), nullable=False)
     geographic_classification: Mapped[str | None] = mapped_column(String(48), nullable=True)
     distance_meters: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -754,6 +785,391 @@ class CandidatePositionModel(Base):
     diagnostics: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OpportunityModel(Base):
+    """Stable user-visible fiche root shared by prospects and events."""
+
+    __tablename__ = "opportunity"
+    __table_args__ = (
+        CheckConstraint("kind IN ('PROSPECT', 'EVENT')", name="ck_opportunity_kind"),
+        CheckConstraint(
+            "creation_origin IN ('SOURCE', 'MANUAL')",
+            name="ck_opportunity_creation_origin",
+        ),
+        CheckConstraint(
+            "hidden_reason IS NULL OR hidden_reason IN ("
+            "'NOT_RELEVANT', 'DUPLICATE', 'INCORRECT_INFORMATION', 'OTHER')",
+            name="ck_opportunity_hidden_reason",
+        ),
+        CheckConstraint(
+            "duplicate_of_opportunity_id IS NULL OR ("
+            "hidden_at IS NOT NULL AND hidden_reason = 'DUPLICATE' "
+            "AND duplicate_of_opportunity_id <> id)",
+            name="ck_opportunity_duplicate_hidden",
+        ),
+        Index(
+            "ix_opportunity_visible_kind",
+            "kind",
+            postgresql_where=text("hidden_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    creation_origin: Mapped[str] = mapped_column(String(16), nullable=False)
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    hidden_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    duplicate_of_opportunity_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("opportunity.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OrganizationModel(Base):
+    """Legal entity shared by one or more physical establishments."""
+
+    __tablename__ = "organization"
+    __table_args__ = (
+        CheckConstraint("siren IS NULL OR siren ~ '^[0-9]{9}$'", name="ck_organization_siren"),
+        CheckConstraint(
+            "administrative_state IN ('ACTIVE', 'CEASED', 'UNKNOWN')",
+            name="ck_organization_administrative_state",
+        ),
+        CheckConstraint(
+            "diffusion_status IN ('FULL', 'PARTIAL', 'UNKNOWN')",
+            name="ck_organization_diffusion_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    siren: Mapped[str | None] = mapped_column(String(9), nullable=True, unique=True)
+    legal_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    usual_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    organization_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    legal_category: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    administrative_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    diffusion_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    current_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    administrative_state_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    diffusion_status_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EstablishmentModel(Base):
+    """One physical local site identified by SIRET when available."""
+
+    __tablename__ = "establishment"
+    __table_args__ = (
+        CheckConstraint(
+            "siret IS NULL OR siret ~ '^[0-9]{14}$'",
+            name="ck_establishment_siret",
+        ),
+        CheckConstraint(
+            "(activity_code IS NULL) = (activity_nomenclature IS NULL)",
+            name="ck_establishment_activity_pair",
+        ),
+        CheckConstraint(
+            "employee_scope IN ('LOCAL', 'GENERAL', 'UNKNOWN')",
+            name="ck_establishment_employee_scope",
+        ),
+        CheckConstraint(
+            "employee_year IS NULL OR employee_year BETWEEN 1800 AND 2200",
+            name="ck_establishment_employee_year",
+        ),
+        CheckConstraint(
+            "administrative_state IN ('ACTIVE', 'CLOSED', 'UNKNOWN')",
+            name="ck_establishment_administrative_state",
+        ),
+        CheckConstraint(
+            "diffusion_status IN ('FULL', 'PARTIAL', 'UNKNOWN')",
+            name="ck_establishment_diffusion_status",
+        ),
+        Index("ix_establishment_activity", "activity_nomenclature", "activity_code"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("organization.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    siret: Mapped[str | None] = mapped_column(String(14), nullable=True, unique=True)
+    is_head_office: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    source_names: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    activity_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    activity_nomenclature: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    activity_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    employee_band: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    employee_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    employee_scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    administrative_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    diffusion_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    established_on: Mapped[date | None] = mapped_column(nullable=True)
+    current_period_started_on: Mapped[date | None] = mapped_column(nullable=True)
+    source_processed_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    administrative_state_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    diffusion_status_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ProspectModel(Base):
+    """Source projection for one user-visible regular prospect."""
+
+    __tablename__ = "prospect"
+    __table_args__ = (
+        CheckConstraint(
+            "eligibility IN ('ELIGIBLE', 'RESTRICTED', 'UNKNOWN')",
+            name="ck_prospect_eligibility",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("opportunity.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    establishment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("establishment.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    source_display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_organization_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_business_signals: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    eligibility: Mapped[str] = mapped_column(String(16), nullable=False)
+    eligibility_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    eligibility_reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SourceBindingModel(Base):
+    """Stable provider object attached to an opportunity, including hidden ones."""
+
+    __tablename__ = "source_binding"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('CURRENT', 'POTENTIALLY_STALE', 'RESTRICTED')",
+            name="ck_source_binding_state",
+        ),
+        CheckConstraint(
+            "consecutive_absence_count >= 0",
+            name="ck_source_binding_absence_count",
+        ),
+        Index(
+            "uq_source_binding_source_identity",
+            "data_source_code",
+            "external_identity_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    data_source_code: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("data_source.code", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    external_identity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("external_identity.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    opportunity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("opportunity.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    producer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    current_observation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    consecutive_absence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class LocationAssertionModel(Base):
+    """Versioned source or user location for one opportunity."""
+
+    __tablename__ = "location_assertion"
+    __table_args__ = (
+        CheckConstraint("layer IN ('SOURCE', 'USER')", name="ck_location_assertion_layer"),
+        CheckConstraint("country_code = 'FR'", name="ck_location_assertion_country"),
+        CheckConstraint(
+            "position_origin IN ('SIRENE_DATASET', 'SIRENE_API', "
+            "'GEOPLATFORM_GEOCODER', 'DATATOURISME', 'USER_CONFIRMED', 'OTHER')",
+            name="ck_location_assertion_origin",
+        ),
+        CheckConstraint(
+            "precision IN ('ROOFTOP', 'ADDRESS', 'STREET', 'MUNICIPALITY', 'UNKNOWN')",
+            name="ck_location_assertion_precision",
+        ),
+        CheckConstraint(
+            "usability IN ('USABLE', 'TO_VERIFY', 'MISSING')",
+            name="ck_location_assertion_usability",
+        ),
+        CheckConstraint(
+            "match_score IS NULL OR (match_score >= 0 AND match_score <= 1)",
+            name="ck_location_assertion_match_score",
+        ),
+        CheckConstraint(
+            "is_current OR retired_at IS NOT NULL",
+            name="ck_location_assertion_retired",
+        ),
+        Index(
+            "uq_location_assertion_current_layer",
+            "opportunity_id",
+            "layer",
+            unique=True,
+            postgresql_where=text("is_current"),
+        ),
+        Index("ix_location_assertion_point", "point", postgresql_using="gist"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    opportunity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("opportunity.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    layer: Mapped[str] = mapped_column(String(16), nullable=False)
+    full_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    structured_address: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    municipality_code: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    postcode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    point: Mapped[str | None] = mapped_column(GeographyPoint(), nullable=True)
+    position_origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_crs: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    quality_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    precision: Mapped[str] = mapped_column(String(32), nullable=False)
+    usability: Mapped[str] = mapped_column(String(32), nullable=False)
+    address_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    position_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    dataset_release_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("dataset_release.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    candidate_position_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("candidate_position.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    rule_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    diagnostics: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FieldLineageModel(Base):
+    """Current observation selected for one scalar source-projection field."""
+
+    __tablename__ = "field_lineage"
+
+    opportunity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("opportunity.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    field_code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_observation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    source_path: Mapped[str] = mapped_column(String(256), nullable=False)
+    resolution_rule: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SourceSightingModel(Base):
+    """Evidence that one stable source object appeared in a collection cycle."""
+
+    __tablename__ = "source_sighting"
+
+    source_binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_binding.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    collection_cycle_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("collection_cycle.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    source_observation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ConnectorCoverageModel(Base):

@@ -63,9 +63,7 @@ jsonb_to_recordset(CAST(:positions AS jsonb)) AS input(
 def _required_counter(counters: dict[str, object], key: str) -> int:
     value = counters.get(key)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise SireneGeolocationImportError(
-            "completed Sirene geolocation counters are invalid"
-        )
+        raise SireneGeolocationImportError("completed Sirene geolocation counters are invalid")
     return value
 
 
@@ -119,9 +117,7 @@ class SqlAlchemySireneGeolocationRepository:
         except SireneGeolocationImportError:
             raise
         except SQLAlchemyError as error:
-            raise SireneGeolocationImportError(
-                "cannot load Sirene geolocation targets"
-            ) from error
+            raise SireneGeolocationImportError("cannot load Sirene geolocation targets") from error
 
         targets = tuple(self._target_from_row(row) for row in rows)
         sirets = [target.siret for target in targets]

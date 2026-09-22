@@ -20,13 +20,20 @@ from radar.collections.contracts import (
     ReservedCollection,
 )
 from radar.collections.worker import CollectionWorker
-from radar.geography.contracts import GeocodedAddress, StructuredAddress
+from radar.geography.contracts import AddressNotFoundError, GeocodedAddress, StructuredAddress
 from radar.persistence.collections import SqlAlchemyCollectionRepository
 from radar.persistence.geography import SqlAlchemyGeographyRepository
 from radar.persistence.reference_data import SqlAlchemyMunicipalityReferenceRepository
 from radar.persistence.sirene_execution import SqlAlchemySireneExecutionRepository
+from radar.persistence.sirene_fallback_geocoding import (
+    SqlAlchemySireneFallbackGeocodingRepository,
+)
 from radar.persistence.sirene_geolocation import SqlAlchemySireneGeolocationRepository
 from radar.persistence.sirene_planning import SqlAlchemySirenePlanRepository
+from radar.persistence.sirene_position_resolution import (
+    SqlAlchemySirenePositionResolutionRepository,
+)
+from radar.persistence.sirene_projection import SqlAlchemySireneProspectProjectionRepository
 from radar.persistence.sirene_staging import SqlAlchemySireneCandidateStagingRepository
 from radar.prospects.contracts import (
     Activity,
@@ -34,6 +41,7 @@ from radar.prospects.contracts import (
     LambertCoordinates,
     ProspectCandidate,
 )
+from radar.prospects.fallback_geocoding import SireneFallbackGeocodingService
 from radar.prospects.geolocation import (
     SireneGeolocationImportService,
     SireneGeolocationReleaseSource,
@@ -42,6 +50,8 @@ from radar.prospects.planning import (
     SireneCollectionPlanningService,
     SireneMunicipalityBatch,
 )
+from radar.prospects.position_resolution import SirenePositionResolutionService
+from radar.prospects.projection import SireneProspectProjectionService
 from radar.prospects.sirene_collection import SireneBatchEnumerator, SireneExecutionError
 from radar.prospects.staging import SireneCandidatePageStager
 from radar.providers.sirene import (
@@ -132,6 +142,7 @@ def staging_candidate(
     *,
     siret: str = "12345678901234",
     siren: str = "123456789",
+    street_number: str = "12",
 ) -> ProspectCandidate:
     return ProspectCandidate(
         siret=siret,
@@ -146,7 +157,7 @@ def staging_candidate(
         employee_year=2024,
         address=EstablishmentAddress(
             address_identifier="ADDR-1",
-            street_number="12",
+            street_number=street_number,
             repetition_index=None,
             street_type="RUE",
             street_label="SAINT PIERRE",
@@ -245,6 +256,36 @@ class FixtureSireneReader:
             importable_count=0,
             page_count=2,
             rejection_counts={"fixture_filtered": 2},
+        )
+
+
+class FixtureFallbackGeocoder:
+    """Return one public address result without making a network request."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def geocode(self, input_address: str) -> GeocodedAddress:
+        self.queries.append(input_address)
+        if input_address.startswith("14 "):
+            raise AddressNotFoundError("fixture address not found")
+        return GeocodedAddress(
+            normalized_label="12 Rue Saint Pierre 40100 Dax",
+            structured_address=StructuredAddress(
+                house_number="12",
+                street="Rue Saint Pierre",
+                postcode="40100",
+                city="Dax",
+                context="40, Landes, Nouvelle-Aquitaine",
+            ),
+            longitude=DAX_LONGITUDE,
+            latitude=DAX_LATITUDE,
+            municipality_code="40088",
+            ban_id="40088_1750_00012",
+            result_type="housenumber",
+            score=0.96,
+            provider_name="Géoplateforme",
+            provider_url="https://data.geopf.fr/geocodage/search",
         )
 
 
@@ -726,15 +767,41 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
                 """
                 SELECT
                     ST_X(ST_Transform(ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326), 2154)),
-                    ST_Y(ST_Transform(ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326), 2154))
+                    ST_Y(ST_Transform(ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326), 2154)),
+                    ST_X(ST_Transform(
+                        ST_SetSRID(ST_MakePoint(:outside_longitude, :latitude), 4326),
+                        2154
+                    )),
+                    ST_Y(ST_Transform(
+                        ST_SetSRID(ST_MakePoint(:outside_longitude, :latitude), 4326),
+                        2154
+                    ))
                 """
             ),
-            {"longitude": DAX_LONGITUDE, "latitude": DAX_LATITUDE},
+            {
+                "longitude": DAX_LONGITUDE,
+                "outside_longitude": DAX_LONGITUDE + 0.005,
+                "latitude": DAX_LATITUDE,
+            },
         ).one()
     candidate = staging_candidate(LambertCoordinates(float(lambert[0]), float(lambert[1])))
     candidate_without_coordinates = staging_candidate(
         siret="98765432109876",
         siren="987654321",
+    )
+    candidate_with_file_fallback = staging_candidate(
+        siret="55555555555555",
+        siren="555555555",
+    )
+    candidate_unresolved = staging_candidate(
+        siret="66666666666666",
+        siren="666666666",
+        street_number="14",
+    )
+    candidate_outside_radius = staging_candidate(
+        LambertCoordinates(float(lambert[2]), float(lambert[3])),
+        siret="77777777777777",
+        siren="777777777",
     )
     information = SireneServiceInformation(
         service_state="UP",
@@ -743,16 +810,22 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
     )
     candidate_page = SirenePage(
         number=1,
-        announced_total=2,
-        received_count=2,
-        importable_candidates=(candidate, candidate_without_coordinates),
+        announced_total=5,
+        received_count=5,
+        importable_candidates=(
+            candidate,
+            candidate_without_coordinates,
+            candidate_with_file_fallback,
+            candidate_unresolved,
+            candidate_outside_radius,
+        ),
         rejection_counts={},
         next_cursor_fingerprint="d" * 64,
         terminal=False,
     )
     terminal_page = SirenePage(
         number=2,
-        announced_total=2,
+        announced_total=5,
         received_count=0,
         importable_candidates=(),
         rejection_counts={},
@@ -761,6 +834,7 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
     )
     try:
         municipality_reference.import_file(release_path, release_source("staging-2026"))
+        SqlAlchemyGeographyRepository(engine).update_radii(100, 100, clock.now)
         collection_repository.enqueue(
             "SIRENE",
             "MANUAL",
@@ -823,17 +897,17 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
             second,
             second_batch,
             SireneBatchSummary(
-                announced_total=2,
-                received_count=2,
-                unique_siret_count=2,
-                importable_count=2,
+                announced_total=5,
+                received_count=5,
+                unique_siret_count=5,
+                importable_count=5,
                 page_count=2,
                 rejection_counts={},
             ),
             clock.now,
         )
         result = execution_repository.finish_source(second, second_plan, clock.now)
-        assert result.importable_count == 2
+        assert result.importable_count == 5
 
         geolocation_path = tmp_path / "sirene-geolocation.parquet"
         write_geolocation_file(
@@ -860,6 +934,28 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
                     500.0,
                     DAX_LATITUDE,
                     DAX_LONGITUDE,
+                ),
+                (
+                    "55555555555555",
+                    float(lambert[0]),
+                    float(lambert[1]),
+                    "22",
+                    "2154",
+                    "40088",
+                    50.0,
+                    DAX_LATITUDE,
+                    DAX_LONGITUDE,
+                ),
+                (
+                    "77777777777777",
+                    float(lambert[2]),
+                    float(lambert[3]),
+                    "11",
+                    "2154",
+                    "40088",
+                    0.0,
+                    DAX_LATITUDE,
+                    DAX_LONGITUDE + 0.005,
                 ),
                 (
                     "99999999999999",
@@ -901,10 +997,69 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
             geolocation_path,
             geolocation_source,
         )
-        assert geolocation_scan.requested_siret_count == 2
-        assert geolocation_scan.matched_siret_count == 2
-        assert geolocation_scan.missing_siret_count == 0
+        assert geolocation_scan.requested_siret_count == 5
+        assert geolocation_scan.matched_siret_count == 4
+        assert geolocation_scan.missing_siret_count == 1
         assert repeated_scan == geolocation_scan
+
+        resolution_service = SirenePositionResolutionService(
+            SqlAlchemySirenePositionResolutionRepository(engine),
+            clock=clock,
+        )
+        resolution = resolution_service.resolve(second)
+        repeated_resolution = resolution_service.resolve(second)
+        assert resolution.requested_count == 5
+        assert resolution.api_selected_count == 2
+        assert resolution.file_selected_count == 1
+        assert resolution.geocoder_selected_count == 0
+        assert resolution.geocoding_required_count == 2
+        assert resolution.unresolved_count == 0
+        assert resolution.divergent_count == 0
+        assert repeated_resolution == resolution
+
+        fixture_geocoder = FixtureFallbackGeocoder()
+        fallback_service = SireneFallbackGeocodingService(
+            SqlAlchemySireneFallbackGeocodingRepository(engine),
+            fixture_geocoder,
+            clock=clock,
+            monotonic=lambda: 1.0,
+            sleeper=lambda _seconds: None,
+        )
+        fallback_summary = fallback_service.geocode_pending(second)
+        repeated_fallback_summary = fallback_service.geocode_pending(second)
+        assert fallback_summary.requested_count == 2
+        assert fallback_summary.matched_count == 1
+        assert fallback_summary.usable_count == 1
+        assert fallback_summary.to_verify_count == 0
+        assert fallback_summary.missing_count == 1
+        assert repeated_fallback_summary == fallback_summary
+        assert sorted(fixture_geocoder.queries) == [
+            "12 RUE SAINT PIERRE 40100 DAX",
+            "14 RUE SAINT PIERRE 40100 DAX",
+        ]
+
+        final_resolution = resolution_service.resolve(second)
+        assert final_resolution.requested_count == 5
+        assert final_resolution.api_selected_count == 2
+        assert final_resolution.file_selected_count == 1
+        assert final_resolution.geocoder_selected_count == 1
+        assert final_resolution.geocoding_required_count == 0
+        assert final_resolution.unresolved_count == 1
+        assert final_resolution.divergent_count == 0
+
+        projection_service = SireneProspectProjectionService(
+            SqlAlchemySireneProspectProjectionRepository(engine),
+            clock=clock,
+        )
+        projection = projection_service.project(second)
+        repeated_projection = projection_service.project(second)
+        assert projection.requested_count == 5
+        assert projection.created_count == 4
+        assert projection.updated_count == 0
+        assert projection.unchanged_count == 0
+        assert projection.counted_only_count == 1
+        assert projection.location_unknown_count == 1
+        assert repeated_projection == projection
 
         with engine.connect() as connection:
             counts = (
@@ -918,7 +1073,14 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
                             (SELECT count(*) FROM candidate_position) AS positions,
                             (SELECT count(*) FROM collection_page) AS pages,
                             (SELECT count(*) FROM collection_item
-                             WHERE collection_page_id IS NOT NULL) AS linked_items
+                             WHERE collection_page_id IS NOT NULL) AS linked_items,
+                            (SELECT count(*) FROM organization) AS organizations,
+                            (SELECT count(*) FROM establishment) AS establishments,
+                            (SELECT count(*) FROM opportunity) AS opportunities,
+                            (SELECT count(*) FROM prospect) AS prospects,
+                            (SELECT count(*) FROM source_binding) AS source_bindings,
+                            (SELECT count(*) FROM source_sighting) AS source_sightings,
+                            (SELECT count(*) FROM location_assertion) AS locations
                         """
                     )
                 )
@@ -1012,14 +1174,112 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
                 .mappings()
                 .all()
             )
+            fallback_positions = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            position.precision,
+                            position.usability,
+                            position.geographic_classification,
+                            position.distance_meters,
+                            position.diagnostics,
+                            observation.payload,
+                            source.status AS source_status,
+                            source.request_count,
+                            source.error_count
+                        FROM candidate_position AS position
+                        JOIN source_observation AS observation
+                          ON observation.id = position.source_observation_id
+                        JOIN collection_item AS item
+                          ON item.id = position.collection_item_id
+                        JOIN collection_source_run AS source
+                          ON source.collection_cycle_id = item.collection_cycle_id
+                         AND source.source = 'GEOPLATFORM_GEOCODER'
+                        WHERE position.origin = 'GEOPLATFORM_GEOCODER'
+                        ORDER BY observation.payload #>> '{request,input_address}'
+                        """
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            projected_prospects = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            establishment.siret,
+                            organization.siren,
+                            organization.legal_name,
+                            organization.administrative_state
+                                AS organization_state,
+                            organization.diffusion_status
+                                AS organization_diffusion,
+                            establishment.activity_code,
+                            establishment.activity_nomenclature,
+                            establishment.employee_band,
+                            establishment.employee_scope,
+                            establishment.administrative_state
+                                AS establishment_state,
+                            prospect.source_display_name,
+                            prospect.eligibility,
+                            opportunity.hidden_at,
+                            location.position_origin,
+                            location.precision,
+                            location.usability,
+                            location.point IS NOT NULL AS has_point,
+                            location.municipality_code,
+                            binding.state AS binding_state,
+                            identity.establishment_id = establishment.id
+                                AS identity_linked
+                        FROM prospect
+                        JOIN opportunity ON opportunity.id = prospect.id
+                        JOIN establishment
+                          ON establishment.id = prospect.establishment_id
+                        JOIN organization
+                          ON organization.id = establishment.organization_id
+                        JOIN source_binding AS binding
+                          ON binding.opportunity_id = opportunity.id
+                         AND binding.data_source_code = 'SIRENE_API'
+                        JOIN external_identity AS identity
+                          ON identity.id = binding.external_identity_id
+                        JOIN location_assertion AS location
+                          ON location.opportunity_id = opportunity.id
+                         AND location.layer = 'SOURCE'
+                         AND location.is_current
+                        ORDER BY establishment.siret
+                        """
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            lineage_counts = connection.execute(
+                text(
+                    """
+                    SELECT field_code, count(*)
+                    FROM field_lineage
+                    GROUP BY field_code
+                    ORDER BY field_code
+                    """
+                )
+            ).all()
 
         assert dict(counts) == {
-            "identities": 2,
-            "observations": 4,
-            "items": 4,
-            "positions": 6,
+            "identities": 5,
+            "observations": 11,
+            "items": 10,
+            "positions": 16,
             "pages": 3,
-            "linked_items": 4,
+            "linked_items": 10,
+            "organizations": 4,
+            "establishments": 4,
+            "opportunities": 4,
+            "prospects": 4,
+            "source_bindings": 4,
+            "source_sightings": 4,
+            "locations": 4,
         }
         assert dict(identity) == {
             "authority": "INSEE",
@@ -1035,22 +1295,77 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
         assert observation["payload"]["employee_band"] == "12"
         assert observation["payload"]["address"]["municipality_code"] == "40088"
         assert observation["payload"]["address"]["coordinates"]["crs"] == "EPSG:2154"
-        assert [item["attempt_number"] for item in items] == [1, 1, 2, 2]
+        assert [item["attempt_number"] for item in items] == [
+            1,
+            1,
+            1,
+            1,
+            1,
+            2,
+            2,
+            2,
+            2,
+            2,
+        ]
         assert all(item["page_number"] == 1 for item in items)
-        assert [item["item_rank"] for item in items] == [1, 2, 1, 2]
-        in_radius = [item for item in items if item["item_rank"] == 1]
-        unknown = [item for item in items if item["item_rank"] == 2]
-        assert all(item["geographic_classification"] == "IN_RADIUS" for item in in_radius)
-        assert all(item["distance_meters"] == pytest.approx(0.0, abs=0.1) for item in in_radius)
-        assert all(item["reason"]["code"] == "API_COORDINATES_USABLE" for item in in_radius)
-        assert all(item["reason"]["precision"] == "UNKNOWN" for item in in_radius)
-        assert all(item["geographic_classification"] == "LOCATION_UNKNOWN" for item in unknown)
-        assert all(item["distance_meters"] is None for item in unknown)
-        assert all(item["reason"]["code"] == "API_COORDINATES_MISSING" for item in unknown)
-        assert all(item["decision"] is None for item in items)
+        assert [item["item_rank"] for item in items] == [1, 2, 3, 4, 5, 1, 2, 3, 4, 5]
+        first_attempt = [item for item in items if item["attempt_number"] == 1]
+        current_attempt = [item for item in items if item["attempt_number"] == 2]
+        assert first_attempt[0]["geographic_classification"] == "IN_RADIUS"
+        assert first_attempt[0]["distance_meters"] == pytest.approx(0.0, abs=0.1)
+        assert first_attempt[0]["reason"]["code"] == "API_COORDINATES_USABLE"
+        assert first_attempt[0]["reason"]["precision"] == "UNKNOWN"
+        assert all(
+            item["geographic_classification"] == "LOCATION_UNKNOWN" for item in first_attempt[1:4]
+        )
+        assert all(item["distance_meters"] is None for item in first_attempt[1:4])
+        assert all(
+            item["reason"]["code"] == "API_COORDINATES_MISSING" for item in first_attempt[1:4]
+        )
+        assert first_attempt[4]["geographic_classification"] == "OUTSIDE_RADIUS"
+        assert first_attempt[4]["distance_meters"] > 100
+        assert current_attempt[0]["geographic_classification"] == "IN_RADIUS"
+        assert current_attempt[0]["distance_meters"] == pytest.approx(0.0, abs=0.1)
+        assert current_attempt[0]["reason"]["code"] == "POSITION_RESOLVED"
+        assert current_attempt[0]["reason"]["position_source"] == "SIRENE_API"
+        assert current_attempt[0]["reason"]["precision"] == "UNKNOWN"
+        assert current_attempt[1]["geographic_classification"] == "IN_RADIUS"
+        assert current_attempt[1]["distance_meters"] == pytest.approx(0.0, abs=0.1)
+        assert current_attempt[1]["reason"]["code"] == "POSITION_RESOLVED"
+        assert current_attempt[1]["reason"]["position_source"] == "GEOPLATFORM_GEOCODER"
+        assert current_attempt[1]["reason"]["precision"] == "ADDRESS"
+        assert current_attempt[1]["reason"]["file_quality_code"] == "33"
+        assert current_attempt[2]["geographic_classification"] == "IN_RADIUS"
+        assert current_attempt[2]["distance_meters"] == pytest.approx(0.0, abs=0.1)
+        assert current_attempt[2]["reason"]["code"] == "POSITION_RESOLVED"
+        assert current_attempt[2]["reason"]["position_source"] == "SIRENE_GEOLOCATION"
+        assert current_attempt[2]["reason"]["precision"] == "STREET"
+        assert current_attempt[3]["geographic_classification"] == "LOCATION_UNKNOWN"
+        assert current_attempt[3]["distance_meters"] is None
+        assert current_attempt[3]["reason"]["code"] == "POSITION_UNRESOLVED"
+        assert current_attempt[3]["reason"]["geocoder_usability"] == "MISSING"
+        assert (
+            current_attempt[3]["reason"]["geocoder_diagnostic_code"] == "GEOCODER_ADDRESS_NOT_FOUND"
+        )
+        assert current_attempt[4]["geographic_classification"] == "OUTSIDE_RADIUS"
+        assert current_attempt[4]["distance_meters"] > 100
+        assert current_attempt[4]["reason"]["position_source"] == "SIRENE_API"
+        assert all(item["decision"] is None for item in first_attempt)
+        assert all(item["decision"] == "CREATED" for item in current_attempt[:4])
+        assert current_attempt[4]["decision"] == "COUNTED_ONLY"
+        assert all(
+            item["reason"]["projection_code"] == "PROSPECT_PROJECTED"
+            for item in current_attempt[:4]
+        )
+        assert current_attempt[4]["reason"]["projection_code"] == "OUTSIDE_COLLECTION_RADIUS"
         assert tuple(source) == ("SUCCEEDED", 4, 1, 1)
-        assert len(geolocation_positions) == 2
-        usable_file_position, approximate_file_position = geolocation_positions
+        assert len(geolocation_positions) == 4
+        (
+            usable_file_position,
+            fallback_file_position,
+            outside_file_position,
+            approximate_file_position,
+        ) = geolocation_positions
         assert usable_file_position["siret"] == "12345678901234"
         assert usable_file_position["quality_code"] == "11"
         assert usable_file_position["precision"] == "ADDRESS"
@@ -1058,6 +1373,18 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
         assert usable_file_position["geographic_classification"] == "IN_RADIUS"
         assert usable_file_position["distance_meters"] == pytest.approx(0.0, abs=0.1)
         assert usable_file_position["diagnostics"]["code"] == "FILE_COORDINATES_USABLE"
+        assert fallback_file_position["siret"] == "55555555555555"
+        assert fallback_file_position["quality_code"] == "22"
+        assert fallback_file_position["precision"] == "STREET"
+        assert fallback_file_position["usability"] == "USABLE"
+        assert fallback_file_position["geographic_classification"] == "IN_RADIUS"
+        assert fallback_file_position["distance_meters"] == pytest.approx(0.0, abs=0.1)
+        assert fallback_file_position["diagnostics"]["code"] == "FILE_COORDINATES_USABLE"
+        assert outside_file_position["siret"] == "77777777777777"
+        assert outside_file_position["quality_code"] == "11"
+        assert outside_file_position["usability"] == "USABLE"
+        assert outside_file_position["geographic_classification"] == "OUTSIDE_RADIUS"
+        assert outside_file_position["distance_meters"] > 100
         assert approximate_file_position["siret"] == "98765432109876"
         assert approximate_file_position["quality_code"] == "33"
         assert approximate_file_position["precision"] == "MUNICIPALITY"
@@ -1065,10 +1392,75 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
         assert approximate_file_position["geographic_classification"] == "LOCATION_UNKNOWN"
         assert approximate_file_position["distance_meters"] is None
         assert (
-            approximate_file_position["diagnostics"]["code"]
-            == "FILE_QUALITY_REQUIRES_VERIFICATION"
+            approximate_file_position["diagnostics"]["code"] == "FILE_QUALITY_REQUIRES_VERIFICATION"
         )
         assert all(position["release_status"] == "ACTIVE" for position in geolocation_positions)
         assert all(position["source_status"] == "SUCCEEDED" for position in geolocation_positions)
+        assert len(fallback_positions) == 2
+        usable_fallback, missing_fallback = fallback_positions
+        assert usable_fallback["precision"] == "ADDRESS"
+        assert usable_fallback["usability"] == "USABLE"
+        assert usable_fallback["geographic_classification"] == "IN_RADIUS"
+        assert usable_fallback["distance_meters"] == pytest.approx(0.0, abs=0.1)
+        assert usable_fallback["diagnostics"]["code"] == "GEOCODER_ADDRESS_USABLE"
+        assert usable_fallback["diagnostics"]["score"] == 0.96
+        assert usable_fallback["payload"]["outcome"] == "MATCHED"
+        assert usable_fallback["payload"]["request"]["input_address"] == (
+            "12 RUE SAINT PIERRE 40100 DAX"
+        )
+        assert missing_fallback["precision"] == "UNKNOWN"
+        assert missing_fallback["usability"] == "MISSING"
+        assert missing_fallback["geographic_classification"] == "LOCATION_UNKNOWN"
+        assert missing_fallback["distance_meters"] is None
+        assert missing_fallback["diagnostics"]["code"] == "GEOCODER_ADDRESS_NOT_FOUND"
+        assert missing_fallback["payload"]["outcome"] == "NOT_FOUND"
+        assert missing_fallback["payload"]["request"]["input_address"] == (
+            "14 RUE SAINT PIERRE 40100 DAX"
+        )
+        assert all(position["source_status"] == "SUCCEEDED" for position in fallback_positions)
+        assert all(position["request_count"] == 2 for position in fallback_positions)
+        assert all(position["error_count"] == 0 for position in fallback_positions)
+        assert len(projected_prospects) == 4
+        assert [prospect["siret"] for prospect in projected_prospects] == [
+            "12345678901234",
+            "55555555555555",
+            "66666666666666",
+            "98765432109876",
+        ]
+        assert all(prospect["legal_name"] == "Société exemple" for prospect in projected_prospects)
+        assert all(prospect["organization_state"] == "ACTIVE" for prospect in projected_prospects)
+        assert all(prospect["organization_diffusion"] == "FULL" for prospect in projected_prospects)
+        assert all(prospect["activity_code"] == "10.71C" for prospect in projected_prospects)
+        assert all(
+            prospect["activity_nomenclature"] == "NAFRev2" for prospect in projected_prospects
+        )
+        assert all(prospect["employee_band"] == "12" for prospect in projected_prospects)
+        assert all(prospect["employee_scope"] == "LOCAL" for prospect in projected_prospects)
+        assert all(prospect["establishment_state"] == "ACTIVE" for prospect in projected_prospects)
+        assert all(
+            prospect["source_display_name"] == "Atelier public" for prospect in projected_prospects
+        )
+        assert all(prospect["eligibility"] == "ELIGIBLE" for prospect in projected_prospects)
+        assert all(prospect["hidden_at"] is None for prospect in projected_prospects)
+        assert all(prospect["municipality_code"] == "40088" for prospect in projected_prospects)
+        assert all(prospect["binding_state"] == "CURRENT" for prospect in projected_prospects)
+        assert all(prospect["identity_linked"] is True for prospect in projected_prospects)
+        projected_by_siret = {prospect["siret"]: prospect for prospect in projected_prospects}
+        assert projected_by_siret["12345678901234"]["position_origin"] == "SIRENE_API"
+        assert projected_by_siret["12345678901234"]["precision"] == "UNKNOWN"
+        assert projected_by_siret["12345678901234"]["usability"] == "USABLE"
+        assert projected_by_siret["12345678901234"]["has_point"] is True
+        assert projected_by_siret["55555555555555"]["position_origin"] == "SIRENE_DATASET"
+        assert projected_by_siret["55555555555555"]["precision"] == "STREET"
+        assert projected_by_siret["66666666666666"]["usability"] == "MISSING"
+        assert projected_by_siret["66666666666666"]["has_point"] is False
+        assert projected_by_siret["98765432109876"]["position_origin"] == ("GEOPLATFORM_GEOCODER")
+        assert projected_by_siret["98765432109876"]["precision"] == "ADDRESS"
+        assert [tuple(row) for row in lineage_counts] == [
+            ("PROSPECT_ACTIVITY", 4),
+            ("PROSPECT_DISPLAY_NAME", 4),
+            ("PROSPECT_EMPLOYEE_BAND", 4),
+            ("PROSPECT_ORGANIZATION_TYPE", 4),
+        ]
     finally:
         engine.dispose()
