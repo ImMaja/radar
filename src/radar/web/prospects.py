@@ -11,6 +11,7 @@ from radar.auth.contracts import AuthenticatedSession
 from radar.prospects.catalog import (
     ProspectCatalogBackend,
     ProspectCatalogUnavailableError,
+    ProspectContact,
     ProspectDetail,
     ProspectNotFoundError,
     ProspectPage,
@@ -35,6 +36,9 @@ class ProspectListParameters(BaseModel):
     organization_type: str | None = Field(default=None, min_length=1, max_length=64)
     activity_code: str | None = Field(default=None, min_length=1, max_length=16)
     employee_band: str | None = Field(default=None, min_length=1, max_length=8)
+    has_email: bool = False
+    has_phone: bool = False
+    has_website: bool = False
     location: Literal["located", "to_verify"] = "located"
     sort: Literal["distance", "name"] = "distance"
     direction: Literal["asc", "desc"] = "asc"
@@ -74,6 +78,9 @@ class ProspectSummaryResponse(BaseModel):
     employee_band: str | None
     employee_year: int | None
     employee_scope: str
+    has_email: bool
+    has_phone: bool
+    has_website: bool
     address: ProspectAddressResponse
     distance_meters: float | None
     location_status: Literal["located", "to_verify"]
@@ -101,6 +108,14 @@ class ProspectSourceResponse(BaseModel):
     source_updated_at: datetime | None
 
 
+class ProspectContactResponse(BaseModel):
+    type: Literal["EMAIL", "PHONE", "WEBSITE", "BOOKING_URL", "CONTACT_RELAY"]
+    value: str
+    scope: Literal["LOCAL", "CENTRAL", "UNKNOWN"]
+    label: str | None
+    source_reference: str | None
+
+
 class ProspectDetailResponse(ProspectSummaryResponse):
     description: str | None
     siret: str | None
@@ -119,6 +134,7 @@ class ProspectDetailResponse(ProspectSummaryResponse):
     location_quality_code: str | None
     location_match_score: float | None
     first_observed_at: datetime
+    contacts: list[ProspectContactResponse]
     sources: list[ProspectSourceResponse]
 
 
@@ -161,6 +177,9 @@ def _summary_values(summary: ProspectSummary) -> dict[str, object]:
         "employee_band": summary.employee_band,
         "employee_year": summary.employee_year,
         "employee_scope": summary.employee_scope,
+        "has_email": summary.has_email,
+        "has_phone": summary.has_phone,
+        "has_website": summary.has_website,
         "address": _address_response(summary),
         "distance_meters": summary.distance_meters,
         "location_status": summary.location_status,
@@ -184,6 +203,16 @@ def _source_response(source: ProspectSource) -> ProspectSourceResponse:
         last_observed_at=source.last_observed_at,
         retrieved_at=source.retrieved_at,
         source_updated_at=source.source_updated_at,
+    )
+
+
+def _contact_response(contact: ProspectContact) -> ProspectContactResponse:
+    return ProspectContactResponse(
+        type=contact.type,
+        value=contact.value,
+        scope=contact.scope,
+        label=contact.label,
+        source_reference=contact.source_reference,
     )
 
 
@@ -218,6 +247,7 @@ def _detail_response(detail: ProspectDetail) -> ProspectDetailResponse:
             "location_quality_code": detail.location_quality_code,
             "location_match_score": detail.location_match_score,
             "first_observed_at": detail.first_observed_at,
+            "contacts": [_contact_response(contact) for contact in detail.contacts],
             "sources": [_source_response(source) for source in detail.sources],
         }
     )
@@ -247,6 +277,9 @@ def list_prospects(
         ),
         activity_code=parameters.activity_code.upper() if parameters.activity_code else None,
         employee_band=parameters.employee_band.upper() if parameters.employee_band else None,
+        has_email=parameters.has_email,
+        has_phone=parameters.has_phone,
+        has_website=parameters.has_website,
         location=parameters.location,
         sort=parameters.sort,
         direction=parameters.direction,

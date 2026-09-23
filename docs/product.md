@@ -1204,7 +1204,7 @@ des événements sont arrêtés pour le MVP dans
 le périmètre du MVP, mais doivent être clos avant l'implémentation ou la mise
 en production concernée :
 
-- faire valider avant le début du jalon 6 la portée, la purge, la base légale
+- faire valider avant l'activation du connecteur Sirene la portée, la purge, la base légale
   et la durée éventuelle de la liste repoussoir HMAC appliquée lorsqu'un
   établissement ou son unité légale passe en diffusion partielle ;
 - qualifier manuellement l'échantillon de Dax et ajuster les pondérations et

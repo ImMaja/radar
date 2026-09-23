@@ -27,9 +27,11 @@ INFORMATION_URL = f"{SIRENE_BASE_URL}/informations"
 API_KEY_HEADER = "X-INSEE-Api-Key-Integration"
 PAGE_SIZE = 1_000
 MAX_MUNICIPALITIES_PER_BATCH = 30
+MAX_STATUS_SIRETS_PER_BATCH = 1_000
 MAX_RESPONSE_BYTES = 25_000_000
 
 _MUNICIPALITY_CODE = re.compile(r"^(?:(?:0[1-9]|[1-8][0-9]|9[0-5])\d{3}|2[AB]\d{3})$")
+_SIRET = re.compile(r"^\d{14}$")
 MIN_REQUEST_INTERVAL_SECONDS = 2.0
 MAX_HTTP_ATTEMPTS = 4
 MAX_IN_PROCESS_RETRY_SECONDS = 60
@@ -288,6 +290,40 @@ class _SearchResponse(_SireneModel):
     )
 
 
+class _StatusPeriod(_SireneModel):
+    ended_on: str | None = Field(
+        default=None,
+        alias="dateFin",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
+    administrative_state: Literal["A", "F"] = Field(alias="etatAdministratifEtablissement")
+
+
+class _StatusLegalUnit(_SireneModel):
+    diffusion_status: Literal["O", "P"] = Field(alias="statutDiffusionUniteLegale")
+    administrative_state: Literal["A", "C"] = Field(alias="etatAdministratifUniteLegale")
+
+
+class _StatusEstablishment(_SireneModel):
+    siret: str = Field(pattern=r"^\d{14}$")
+    siren: str = Field(pattern=r"^\d{9}$")
+    diffusion_status: Literal["O", "P"] = Field(alias="statutDiffusionEtablissement")
+    periods: list[_StatusPeriod] = Field(
+        alias="periodesEtablissement",
+        min_length=1,
+        max_length=10_000,
+    )
+    legal_unit: _StatusLegalUnit = Field(alias="uniteLegale")
+
+
+class _StatusSearchResponse(_SireneModel):
+    header: _Header
+    establishments: list[_StatusEstablishment] = Field(
+        alias="etablissements",
+        max_length=MAX_STATUS_SIRETS_PER_BATCH,
+    )
+
+
 class _Freshness(_SireneModel):
     collection: str = Field(min_length=1, max_length=100)
     last_bulk_processing: str | None = Field(
@@ -345,6 +381,36 @@ class SireneBatchSummary:
     importable_count: int
     page_count: int
     rejection_counts: dict[str, int]
+
+
+@dataclass(frozen=True)
+class SireneEstablishmentStatus:
+    """Current administrative and diffusion state returned for one known SIRET."""
+
+    siret: str
+    siren: str
+    establishment_administrative_state: Literal["ACTIVE", "CLOSED"]
+    legal_unit_administrative_state: Literal["ACTIVE", "CEASED"]
+    establishment_diffusion_status: Literal["FULL", "PARTIAL"]
+    legal_unit_diffusion_status: Literal["FULL", "PARTIAL"]
+
+    @property
+    def has_partial_diffusion(self) -> bool:
+        """Return whether either published object restricts reuse."""
+
+        return (
+            self.establishment_diffusion_status == "PARTIAL"
+            or self.legal_unit_diffusion_status == "PARTIAL"
+        )
+
+
+@dataclass(frozen=True)
+class SireneStatusLookup:
+    """Reconciled response for one bounded set of already-known SIRET."""
+
+    requested_sirets: tuple[str, ...]
+    statuses: tuple[SireneEstablishmentStatus, ...]
+    missing_sirets: tuple[str, ...]
 
 
 def build_establishment_query(municipality_codes: Sequence[str]) -> str:
@@ -627,6 +693,97 @@ class SireneClient:
             page_count=page_number,
             rejection_counts=dict(rejection_counts),
         )
+
+    def lookup_establishment_statuses(
+        self,
+        sirets: Sequence[str],
+        at_date: str,
+    ) -> SireneStatusLookup:
+        """Read current states for up to 1,000 known SIRET in one exact search."""
+
+        requested_sirets = tuple(sirets)
+        if not 1 <= len(requested_sirets) <= MAX_STATUS_SIRETS_PER_BATCH:
+            raise ValueError("a Sirene status lookup must contain between 1 and 1,000 SIRET")
+        if len(set(requested_sirets)) != len(requested_sirets):
+            raise ValueError("a Sirene status lookup cannot contain duplicate SIRET")
+        if any(_SIRET.fullmatch(siret) is None for siret in requested_sirets):
+            raise ValueError("a Sirene status lookup contains an invalid SIRET")
+        try:
+            parsed_date = date.fromisoformat(at_date)
+        except ValueError as error:
+            raise ValueError("the Sirene collection date must use YYYY-MM-DD") from error
+        if parsed_date.isoformat() != at_date:
+            raise ValueError("the Sirene collection date must use YYYY-MM-DD")
+
+        query = f"siret:({' OR '.join(requested_sirets)})"
+        response = self._get(
+            SIRET_URL,
+            params={
+                "q": query,
+                "date": at_date,
+                "nombre": MAX_STATUS_SIRETS_PER_BATCH,
+                "curseur": "*",
+                "champs": ",".join(
+                    (
+                        "siret",
+                        "siren",
+                        "statutDiffusionEtablissement",
+                        "dateFin",
+                        "etatAdministratifEtablissement",
+                        "statutDiffusionUniteLegale",
+                        "etatAdministratifUniteLegale",
+                    )
+                ),
+            },
+        )
+        if len(response.content) > MAX_RESPONSE_BYTES:
+            raise SireneContractError("the Sirene response is unexpectedly large")
+        try:
+            payload = _StatusSearchResponse.model_validate_json(response.content)
+        except ValidationError as error:
+            raise SireneContractError("the Sirene status schema changed") from error
+        if payload.header.status != 200:
+            raise SireneContractError("the Sirene status header does not report success")
+        if payload.header.count != len(payload.establishments):
+            raise SireneContractError("the Sirene status count is inconsistent")
+        if payload.header.total != len(payload.establishments):
+            raise SireneContractError("the Sirene status response is not complete")
+
+        requested = frozenset(requested_sirets)
+        by_siret: dict[str, SireneEstablishmentStatus] = {}
+        for establishment in payload.establishments:
+            if establishment.siret not in requested:
+                raise SireneContractError("Sirene returned an unexpected targeted SIRET")
+            if establishment.siret in by_siret:
+                raise SireneContractError("Sirene returned a duplicate targeted SIRET")
+            current_periods = [
+                period for period in establishment.periods if period.ended_on is None
+            ]
+            if len(current_periods) != 1:
+                raise SireneContractError(
+                    "a targeted Sirene establishment has no unique current period"
+                )
+            current = current_periods[0]
+            by_siret[establishment.siret] = SireneEstablishmentStatus(
+                siret=establishment.siret,
+                siren=establishment.siren,
+                establishment_administrative_state=(
+                    "ACTIVE" if current.administrative_state == "A" else "CLOSED"
+                ),
+                legal_unit_administrative_state=(
+                    "ACTIVE" if establishment.legal_unit.administrative_state == "A" else "CEASED"
+                ),
+                establishment_diffusion_status=(
+                    "FULL" if establishment.diffusion_status == "O" else "PARTIAL"
+                ),
+                legal_unit_diffusion_status=(
+                    "FULL" if establishment.legal_unit.diffusion_status == "O" else "PARTIAL"
+                ),
+            )
+
+        statuses = tuple(by_siret[siret] for siret in requested_sirets if siret in by_siret)
+        missing = tuple(siret for siret in requested_sirets if siret not in by_siret)
+        return SireneStatusLookup(requested_sirets, statuses, missing)
 
     def _search_payload(self, response: httpx.Response) -> _SearchResponse:
         if len(response.content) > MAX_RESPONSE_BYTES:

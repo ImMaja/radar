@@ -214,7 +214,7 @@ def _insert_prospect(
     return opportunity_id
 
 
-def _attach_sirene_provenance(engine: Engine, prospect_id: UUID) -> None:
+def _attach_sirene_provenance(engine: Engine, prospect_id: UUID) -> UUID:
     identity_id = uuid4()
     observation_id = uuid4()
     binding_id = uuid4()
@@ -292,6 +292,67 @@ def _attach_sirene_provenance(engine: Engine, prospect_id: UUID) -> None:
             text("UPDATE source_observation SET source_binding_id = :binding_id WHERE id = :id"),
             {"binding_id": binding_id, "id": observation_id},
         )
+    return observation_id
+
+
+def _attach_contacts(
+    engine: Engine,
+    prospect_id: UUID,
+    *,
+    layer: str,
+    source_observation_id: UUID | None,
+    contacts: tuple[tuple[str, str, str, str], ...],
+) -> None:
+    contact_set_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO contact_set (
+                    id, opportunity_id, layer, source_observation_id,
+                    is_current, created_at, retired_at
+                ) VALUES (
+                    :id, :opportunity_id, :layer, :source_observation_id,
+                    TRUE, :now, NULL
+                )
+                """
+            ),
+            {
+                "id": contact_set_id,
+                "opportunity_id": prospect_id,
+                "layer": layer,
+                "source_observation_id": source_observation_id,
+                "now": NOW,
+            },
+        )
+        for display_order, (contact_type, display_value, normalized_value, scope) in enumerate(
+            contacts
+        ):
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO contact_point (
+                        id, contact_set_id, type, display_value, normalized_value,
+                        scope, label, source_reference, display_order, created_at
+                    ) VALUES (
+                        :id, :contact_set_id, :type, :display_value, :normalized_value,
+                        :scope, :label, :source_reference, :display_order, :now
+                    )
+                    """
+                ),
+                {
+                    "id": uuid4(),
+                    "contact_set_id": contact_set_id,
+                    "type": contact_type,
+                    "display_value": display_value,
+                    "normalized_value": normalized_value,
+                    "scope": scope,
+                    "label": "Accueil" if contact_type == "EMAIL" else None,
+                    "source_reference": f"contacts.{contact_type.lower()}",
+                    "display_order": display_order,
+                    "now": NOW,
+                },
+            )
 
 
 def test_catalog_filters_and_sorts_local_prospects_by_current_reference(
@@ -309,6 +370,17 @@ def test_catalog_filters_and_sorts_local_prospects_by_current_reference(
             municipality_code="40088",
             longitude=DAX_LONGITUDE,
             latitude=DAX_LATITUDE,
+        )
+        alpha_observation_id = _attach_sirene_provenance(engine, alpha_id)
+        _attach_contacts(
+            engine,
+            alpha_id,
+            layer="SOURCE",
+            source_observation_id=alpha_observation_id,
+            contacts=(
+                ("EMAIL", "bonjour@alpha.example", "bonjour@alpha.example", "LOCAL"),
+                ("WEBSITE", "https://alpha.example", "https://alpha.example/", "CENTRAL"),
+            ),
         )
         _insert_prospect(
             engine,
@@ -369,6 +441,9 @@ def test_catalog_filters_and_sorts_local_prospects_by_current_reference(
             "Entrepôt Beta",
         ]
         assert default_page.items[0].id == alpha_id
+        assert default_page.items[0].has_email is True
+        assert default_page.items[0].has_phone is False
+        assert default_page.items[0].has_website is True
         assert default_page.items[0].distance_meters == pytest.approx(0, abs=0.01)
         assert 20_000 < cast_float(default_page.items[1].distance_meters) < 30_000
 
@@ -389,6 +464,15 @@ def test_catalog_filters_and_sorts_local_prospects_by_current_reference(
             )
         )
         assert [item.display_name for item in filtered.items] == ["Entrepôt Beta"]
+
+        with_email = repository.search(ProspectSearch(has_email=True))
+        assert [item.id for item in with_email.items] == [alpha_id]
+
+        with_email_and_website = repository.search(ProspectSearch(has_email=True, has_website=True))
+        assert [item.id for item in with_email_and_website.items] == [alpha_id]
+
+        with_phone = repository.search(ProspectSearch(has_phone=True))
+        assert with_phone.total == 0
 
         to_verify = repository.search(ProspectSearch(location="to_verify", sort="name"))
         assert to_verify.total == 1
@@ -418,7 +502,14 @@ def test_catalog_detail_exposes_current_source_provenance(
             longitude=DAX_LONGITUDE,
             latitude=DAX_LATITUDE,
         )
-        _attach_sirene_provenance(engine, prospect_id)
+        observation_id = _attach_sirene_provenance(engine, prospect_id)
+        _attach_contacts(
+            engine,
+            prospect_id,
+            layer="SOURCE",
+            source_observation_id=observation_id,
+            contacts=(("EMAIL", "bonjour@example.fr", "bonjour@example.fr", "LOCAL"),),
+        )
 
         detail = repository.get(prospect_id)
 
@@ -427,9 +518,60 @@ def test_catalog_detail_exposes_current_source_provenance(
         assert detail.siren == "000000001"
         assert detail.summary.address.municipality == "DAX"
         assert detail.longitude == pytest.approx(DAX_LONGITUDE)
+        assert detail.summary.has_email is True
+        assert detail.contacts[0].type == "EMAIL"
+        assert detail.contacts[0].value == "bonjour@example.fr"
+        assert detail.contacts[0].scope == "LOCAL"
+        assert detail.contacts[0].label == "Accueil"
         assert detail.sources[0].code == "SIRENE_API"
         assert detail.sources[0].authority == "INSEE"
         assert detail.sources[0].retrieved_at == NOW
+    finally:
+        engine.dispose()
+
+
+def test_user_contact_set_replaces_source_contacts_for_filters_and_detail(
+    integration_database_url: str,
+) -> None:
+    engine = create_engine(integration_database_url)
+    repository = SqlAlchemyProspectCatalogRepository(engine)
+    try:
+        _confirm_dax(engine)
+        prospect_id = _insert_prospect(
+            engine,
+            rank=1,
+            display_name="Boulangerie Alpha",
+            municipality="DAX",
+            municipality_code="40088",
+            longitude=DAX_LONGITUDE,
+            latitude=DAX_LATITUDE,
+        )
+        observation_id = _attach_sirene_provenance(engine, prospect_id)
+        _attach_contacts(
+            engine,
+            prospect_id,
+            layer="SOURCE",
+            source_observation_id=observation_id,
+            contacts=(("EMAIL", "source@example.fr", "source@example.fr", "LOCAL"),),
+        )
+        _attach_contacts(
+            engine,
+            prospect_id,
+            layer="USER",
+            source_observation_id=None,
+            contacts=(("PHONE", "05 58 00 00 00", "+33558000000", "LOCAL"),),
+        )
+
+        assert repository.search(ProspectSearch(has_email=True)).total == 0
+        phone_page = repository.search(ProspectSearch(has_phone=True))
+        assert [item.id for item in phone_page.items] == [prospect_id]
+        assert phone_page.items[0].has_email is False
+        assert phone_page.items[0].has_phone is True
+
+        detail = repository.get(prospect_id)
+        assert [(contact.type, contact.value) for contact in detail.contacts] == [
+            ("PHONE", "05 58 00 00 00")
+        ]
     finally:
         engine.dispose()
 

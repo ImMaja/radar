@@ -13,6 +13,9 @@ const alpha = {
   employee_band: "12",
   employee_year: 2024,
   employee_scope: "LOCAL",
+  has_email: true,
+  has_phone: false,
+  has_website: true,
   address: {
     full_address: "12 RUE SAINT PIERRE 40100 DAX",
     street_number: "12",
@@ -36,6 +39,9 @@ const beta = {
   display_name: "Entrepôt Beta",
   activity_code: "52.10B",
   employee_band: "22",
+  has_email: false,
+  has_phone: true,
+  has_website: false,
   address: {
     ...alpha.address,
     full_address: "1 RUE EXEMPLE 40230 SAINT-VINCENT-DE-TYROSSE",
@@ -73,6 +79,22 @@ const alphaDetail = {
   location_quality_code: null,
   location_match_score: null,
   first_observed_at: "2026-09-20T12:00:00Z",
+  contacts: [
+    {
+      type: "EMAIL",
+      value: "bonjour@alpha.example",
+      scope: "LOCAL",
+      label: "Accueil",
+      source_reference: "contacts.email",
+    },
+    {
+      type: "WEBSITE",
+      value: "https://alpha.example",
+      scope: "CENTRAL",
+      label: null,
+      source_reference: "contacts.website",
+    },
+  ],
   sources: [
     {
       code: "SIRENE_API",
@@ -158,6 +180,7 @@ describe("prospect catalogue", () => {
     fireEvent.change(screen.getByLabelText("Code d’activité"), {
       target: { value: "52.10B" },
     });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Email" }));
     fireEvent.change(screen.getByLabelText("Trier par"), { target: { value: "name" } });
     fireEvent.change(screen.getByLabelText("Ordre"), { target: { value: "desc" } });
     fireEvent.click(screen.getByRole("button", { name: "Appliquer les filtres" }));
@@ -165,7 +188,7 @@ describe("prospect catalogue", () => {
     expect(await screen.findByText("Entrepôt Beta")).toBeInTheDocument();
     await waitFor(() =>
       expect(fetchMock).toHaveBeenLastCalledWith(
-        "/api/v1/prospects?location=located&sort=name&direction=desc&limit=12&offset=0&q=Tyrosse&max_distance_meters=30000&activity_code=52.10B",
+        "/api/v1/prospects?location=located&sort=name&direction=desc&limit=12&offset=0&q=Tyrosse&max_distance_meters=30000&activity_code=52.10B&has_email=true",
         expect.objectContaining({ credentials: "same-origin" }),
       ),
     );
@@ -222,6 +245,8 @@ describe("prospect catalogue", () => {
       await screen.findByRole("heading", { name: "Identité et activité" }),
     ).toBeInTheDocument();
     expect(screen.getByText("12345678901234")).toBeInTheDocument();
+    expect(screen.getByText("bonjour@alpha.example")).toBeInTheDocument();
+    expect(screen.getByText("Contact local · Accueil")).toBeInTheDocument();
     expect(screen.getByText("API Sirene 3.11")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenLastCalledWith(
       `/api/v1/prospects/${alpha.id}`,

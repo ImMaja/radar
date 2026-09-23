@@ -2,7 +2,7 @@
 
 > Statut : conception logique du MVP
 >
-> Dernière mise à jour : 22 septembre 2026
+> Dernière mise à jour : 23 septembre 2026
 >
 > SGBD cible : PostgreSQL avec PostGIS
 
@@ -491,9 +491,12 @@ retourne un total indépendant de la limite. Le détail charge séparément les
 liens `source_binding` courants afin d'exposer leur fournisseur et leurs dates
 de fraîcheur sans charger l'historique complet des observations.
 
-Les corrections scalaires, contacts et scores ne font pas encore partie du
-schéma exécutable. Leurs filtres ne sont donc pas exposés tant que les tables
-décrites dans ce document ne sont pas matérialisées.
+Les contacts font désormais partie du schéma exécutable et de cette projection
+de lecture. Trois indicateurs calculés exposent la présence effective d'un
+email, d'un téléphone ou d'un site web ; leurs filtres utilisent l'ensemble
+utilisateur courant lorsqu'il existe, sinon l'ensemble source courant. Les
+corrections scalaires et scores ne font pas encore partie du schéma exécutable,
+donc leurs filtres ne sont pas exposés.
 
 ## 9. Événements et organisateurs
 
@@ -901,6 +904,29 @@ Cette table enregistre qu'un objet a été vu lors d'un cycle :
 La paire lien-cycle est unique. Elle permet de distinguer « contenu inchangé »
 de « objet absent » sans recopier la charge complète et de calculer les trois
 absences comparables prévues pour DATAtourisme.
+
+### 13.6 `sirene_known_status_check`
+
+Cette table conserve le résultat durable du contrôle ciblé d'un SIRET déjà
+connu, absent de la sélection active d'un cycle Sirene réussi :
+
+- cycle, lien source et identité externe contrôlés ;
+- observation minimale de statut lorsque Sirene retrouve l'établissement ;
+- résultat parmi `ACTIVE`, `CLOSED`, `CEASED` et `NOT_FOUND` ;
+- instant du contrôle.
+
+La paire cycle-lien source et la paire cycle-identité sont uniques. Une
+observation est obligatoire pour les trois états explicites et interdite pour
+`NOT_FOUND`. Ce dernier résultat ne change ni l'état administratif de
+l'établissement, ni celui de l'organisme, ni l'éligibilité : il incrémente le
+diagnostic d'absence du lien tout en laissant la fiche consultable selon son
+dernier état fiable. Un résultat trouvé crée une présence du cycle et met à
+jour uniquement les états explicitement publiés ; le masquage et les ensembles
+utilisateur restent hors de cette écriture.
+
+La table n'accepte aucun résultat de diffusion partielle. Tant que la politique
+de purge n'est pas validée, un tel résultat arrête la source ciblée avant toute
+persistance de son identifiant ou de sa réponse.
 
 ## 14. Référentiels versionnés
 
@@ -1517,7 +1543,7 @@ base. Une contrainte unique sur l'espace de noms et l'empreinte empêche les
 doublons actifs.
 
 La base légale, la portée exacte et la durée de cette empreinte doivent être
-validées avant le début du jalon 6. Une empreinte HMAC est une donnée
+validées avant l'activation du connecteur Sirene. Une empreinte HMAC est une donnée
 pseudonymisée, pas anonyme. Si sa conservation n'est pas validée, la procédure
 retire entièrement l'identité et accepte de ne plus disposer de cette barrière
 technique ; aucun connecteur Sirene ne peut être mis en production tant que la
@@ -1600,7 +1626,9 @@ Les tests d'intégration de la base devront démontrer au minimum que :
    ensemble de périodes utilisateur survivent à une synchronisation ;
 9. restaurer une correction fait réapparaître la dernière valeur source, pas
    une copie ancienne ;
-10. une absence dans un cycle ne ferme ni ne supprime une fiche ;
+10. une absence dans un cycle ou une recherche ciblée infructueuse ne ferme ni
+    ne supprime une fiche, tandis qu'une réponse explicite fermée ou cessée met
+    à jour son état sans écraser son masquage ni ses contacts utilisateur ;
 11. un cycle partiel ne remplace pas la couverture réussie précédente ;
 12. une position nulle reste dans « Localisation à vérifier » et n'entre pas
     arbitrairement dans un filtre de rayon ;
@@ -1630,7 +1658,8 @@ Les tests d'intégration de la base devront démontrer au minimum que :
 Les points suivants ne bloquent pas la rédaction des autres documents, mais
 doivent être clos avant les migrations correspondantes :
 
-1. avant le début du jalon 6, la politique exacte de purge et de liste
+1. avant l'activation du connecteur Sirene et la migration de conformité, la
+   politique exacte de purge et de liste
    repoussoir lorsqu'un établissement ou son unité légale passe en diffusion
    partielle, y compris la base légale, la portée et la durée éventuelle d'une
    empreinte HMAC ;

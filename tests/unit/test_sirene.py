@@ -10,6 +10,7 @@ from radar.providers.sirene import (
     API_KEY_HEADER,
     INFORMATION_URL,
     MAX_MUNICIPALITIES_PER_BATCH,
+    MAX_STATUS_SIRETS_PER_BATCH,
     SIRET_URL,
     SireneAuthenticationError,
     SireneClient,
@@ -270,6 +271,106 @@ def test_counts_a_concurrent_closed_object_without_exposing_it_as_a_candidate() 
     assert summary.importable_count == 0
     assert summary.rejection_counts == {"closed_establishment": 1}
     assert pages[0].importable_candidates == ()
+
+
+def test_looks_up_known_siret_states_in_one_bounded_exact_request() -> None:
+    requested = ("12345678901234", "98765432109876", "55555555555555")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        payload = search_response(
+            [
+                establishment(siret=requested[0]),
+                establishment(
+                    siret=requested[1],
+                    establishment_state="F",
+                    legal_state="C",
+                ),
+            ],
+            total=2,
+            cursor="*",
+            next_cursor="unused-at-most-one-page",
+        )
+        return httpx.Response(200, json=payload, request=request)
+
+    result = client_for(handler).lookup_establishment_statuses(requested, "2026-09-20")
+
+    assert result.requested_sirets == requested
+    assert result.missing_sirets == (requested[2],)
+    assert result.statuses[0].establishment_administrative_state == "ACTIVE"
+    assert result.statuses[0].legal_unit_administrative_state == "ACTIVE"
+    assert result.statuses[0].has_partial_diffusion is False
+    assert result.statuses[1].establishment_administrative_state == "CLOSED"
+    assert result.statuses[1].legal_unit_administrative_state == "CEASED"
+    assert len(requests) == 1
+    assert requests[0].url.params["q"] == (
+        "siret:(12345678901234 OR 98765432109876 OR 55555555555555)"
+    )
+    assert requests[0].url.params["nombre"] == str(MAX_STATUS_SIRETS_PER_BATCH)
+    assert requests[0].url.params["date"] == "2026-09-20"
+    assert "denominationUniteLegale" not in requests[0].url.params["champs"]
+
+
+def test_status_lookup_exposes_partial_diffusion_without_treating_it_as_closure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = search_response(
+            [
+                establishment(
+                    establishment_state="A",
+                    establishment_diffusion="P",
+                    legal_state="A",
+                    legal_diffusion="P",
+                )
+            ],
+            total=1,
+            cursor="*",
+            next_cursor=None,
+        )
+        return httpx.Response(200, json=payload, request=request)
+
+    status = (
+        client_for(handler)
+        .lookup_establishment_statuses(
+            ("12345678901234",),
+            "2026-09-20",
+        )
+        .statuses[0]
+    )
+
+    assert status.establishment_administrative_state == "ACTIVE"
+    assert status.legal_unit_administrative_state == "ACTIVE"
+    assert status.has_partial_diffusion is True
+
+
+def test_status_lookup_rejects_invalid_inputs_and_incomplete_contracts() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        payload = search_response(
+            [establishment(siret="98765432109876")],
+            total=1,
+            cursor="*",
+            next_cursor=None,
+        )
+        return httpx.Response(200, json=payload, request=request)
+
+    adapter = client_for(handler)
+    with pytest.raises(ValueError, match="between 1 and 1,000"):
+        adapter.lookup_establishment_statuses((), "2026-09-20")
+    with pytest.raises(ValueError, match="duplicate"):
+        adapter.lookup_establishment_statuses(
+            ("12345678901234", "12345678901234"),
+            "2026-09-20",
+        )
+    with pytest.raises(ValueError, match="invalid SIRET"):
+        adapter.lookup_establishment_statuses(("123",), "2026-09-20")
+    assert calls == 0
+
+    with pytest.raises(SireneContractError, match="unexpected targeted SIRET"):
+        adapter.lookup_establishment_statuses(("12345678901234",), "2026-09-20")
 
 
 def test_rejects_duplicates_cursor_loops_and_incoherent_totals() -> None:

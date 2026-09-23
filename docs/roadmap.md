@@ -2,7 +2,7 @@
 
 > Statut : jalons 0 à 5 terminés ; jalon 6 en cours
 >
-> Dernière mise à jour : 22 septembre 2026
+> Dernière mise à jour : 23 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -406,12 +406,40 @@ chaque source. Sans adresse confirmée, l'écran guide vers les réglages et ne
 contacte pas l'API de catalogue. Les tests navigateur couvrent ce garde-fou,
 les paramètres de filtre, la pagination et l'ouverture d'une fiche.
 
-Restent notamment à réaliser avant la sortie du jalon : matérialiser les
-contacts et scores afin d'ajouter leurs filtres, couvrir l'actualisation par un
-nouveau cycle réussi, puis fermer la décision de conformité sur la diffusion
-partielle. Il faudra également composer la chaîne complète dans le worker
-seulement lorsque ces étapes seront prêtes. Le connecteur reste donc désactivé
-dans l'interface et le worker de production.
+Le treizième incrément matérialise les contacts professionnels dans des
+ensembles versionnés `SOURCE` et `USER`. La couche utilisateur courante, si elle
+existe, remplace entièrement la couche source pour l'affichage et les filtres ;
+une future collecte peut donc actualiser ses propres contacts sans écraser une
+correction. La liste expose la présence connue d'un email, d'un téléphone et
+d'un site web, applique les trois filtres sur l'ensemble effectif et la fiche
+détaille la valeur, sa portée et son éventuel libellé. Une absence
+reste une inconnue et ne retire jamais la fiche. Sirene ne fournit aucun de ces
+contacts : son import ne crée donc pas d'ensemble fictif. Les contraintes et
+tests PostgreSQL vérifient l'unicité des ensembles courants, la déduplication
+des valeurs et la priorité utilisateur ; l'API et l'interface couvrent les
+nouveaux filtres.
+
+Le quatorzième incrément contrôle explicitement les SIRET connus absents de la
+sélection active complète. L'adaptateur utilise la recherche multicritère exacte
+par groupes de 1 000 identifiants au maximum et distingue activité, fermeture,
+cessation, diffusion partielle et résultat introuvable. Une source durable
+`SIRENE_KNOWN_STATUS` et la table `sirene_known_status_check` rendent les lots
+idempotents. Seuls les états administratifs explicitement publiés sont
+appliqués ; une réponse introuvable ne ferme rien. Les présences trouvées sont
+rattachées au cycle et une réactivation respecte le masquage ainsi que les
+contacts utilisateur. Une diffusion partielle arrête le traitement avant toute
+persistance de l'identifiant concerné tant que la politique de purge n'est pas
+validée. Les tests PostgreSQL couvrent les quatre résultats applicables, la
+sélection des seules communes comparables et une seconde exécution sans nouvel
+appel fournisseur.
+
+Le score, son filtre et son tri restent volontairement au jalon 8 et ne
+bloquent pas la sortie de ce jalon. Reste à couvrir l'actualisation complète
+d'une fiche présente par un nouveau cycle réussi, puis à fermer et implémenter
+la décision de conformité sur la diffusion partielle. Il faudra également
+composer la chaîne complète dans le worker seulement lorsque ces étapes seront
+prêtes. Le connecteur reste donc désactivé dans l'interface et le worker de
+production.
 
 ### Jalon 7 — Événements DATAtourisme de bout en bout
 

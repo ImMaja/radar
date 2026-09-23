@@ -10,6 +10,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from radar.prospects.catalog import (
     ProspectAddress,
     ProspectCatalogUnavailableError,
+    ProspectContact,
+    ProspectContactScope,
+    ProspectContactType,
     ProspectDetail,
     ProspectLocationFilter,
     ProspectNotFoundError,
@@ -20,7 +23,7 @@ from radar.prospects.catalog import (
     ProspectSummary,
 )
 
-_EFFECTIVE_LOCATION_CTE = """
+_EFFECTIVE_READ_CTES = """
 effective_location AS (
     SELECT DISTINCT ON (location.opportunity_id)
         location.*
@@ -29,6 +32,27 @@ effective_location AS (
     ORDER BY
         location.opportunity_id,
         CASE location.layer WHEN 'USER' THEN 0 ELSE 1 END
+),
+effective_contact_set AS (
+    SELECT DISTINCT ON (contact_set.opportunity_id)
+        contact_set.id,
+        contact_set.opportunity_id
+    FROM contact_set
+    WHERE contact_set.is_current
+    ORDER BY
+        contact_set.opportunity_id,
+        CASE contact_set.layer WHEN 'USER' THEN 0 ELSE 1 END
+),
+effective_contacts AS (
+    SELECT
+        contact_set.opportunity_id,
+        bool_or(contact.type = 'EMAIL') AS has_email,
+        bool_or(contact.type = 'PHONE') AS has_phone,
+        bool_or(contact.type = 'WEBSITE') AS has_website
+    FROM effective_contact_set AS contact_set
+    LEFT JOIN contact_point AS contact
+      ON contact.contact_set_id = contact_set.id
+    GROUP BY contact_set.opportunity_id
 )
 """
 
@@ -48,6 +72,8 @@ LEFT JOIN organization
  AND organization.diffusion_status = 'FULL'
 JOIN effective_location AS location
   ON location.opportunity_id = prospect.id
+LEFT JOIN effective_contacts AS contacts
+  ON contacts.opportunity_id = prospect.id
 CROSS JOIN reference_position AS reference
 WHERE prospect.eligibility = 'ELIGIBLE'
   AND (establishment.organization_id IS NULL OR organization.id IS NOT NULL)
@@ -81,6 +107,9 @@ WHERE prospect.eligibility = 'ELIGIBLE'
       CAST(:employee_band AS text) IS NULL
       OR establishment.employee_band = :employee_band
   )
+  AND (NOT CAST(:has_email AS boolean) OR COALESCE(contacts.has_email, FALSE))
+  AND (NOT CAST(:has_phone AS boolean) OR COALESCE(contacts.has_phone, FALSE))
+  AND (NOT CAST(:has_website AS boolean) OR COALESCE(contacts.has_website, FALSE))
 """
 
 _LIST_COLUMNS = """
@@ -94,6 +123,9 @@ SELECT
     establishment.employee_band,
     establishment.employee_year,
     establishment.employee_scope,
+    COALESCE(contacts.has_email, FALSE) AS has_email,
+    COALESCE(contacts.has_phone, FALSE) AS has_phone,
+    COALESCE(contacts.has_website, FALSE) AS has_website,
     location.full_address,
     location.structured_address,
     location.postcode,
@@ -164,7 +196,7 @@ class SqlAlchemyProspectCatalogRepository:
                 total = connection.execute(
                     text(
                         f"""
-                        WITH {_EFFECTIVE_LOCATION_CTE}
+                        WITH {_EFFECTIVE_READ_CTES}
                         SELECT count(*)
                         {_VISIBLE_PROSPECT_FROM}
                         """
@@ -174,7 +206,7 @@ class SqlAlchemyProspectCatalogRepository:
                 rows = connection.execute(
                     text(
                         f"""
-                        WITH {_EFFECTIVE_LOCATION_CTE}
+                        WITH {_EFFECTIVE_READ_CTES}
                         {_LIST_COLUMNS}
                         {_VISIBLE_PROSPECT_FROM}
                         {_ORDER_BY}
@@ -208,7 +240,7 @@ class SqlAlchemyProspectCatalogRepository:
                     connection.execute(
                         text(
                             f"""
-                        WITH {_EFFECTIVE_LOCATION_CTE},
+                        WITH {_EFFECTIVE_READ_CTES},
                         current_reference AS (
                             SELECT reference.point
                             FROM application_setting AS settings
@@ -233,6 +265,9 @@ class SqlAlchemyProspectCatalogRepository:
                             establishment.employee_band,
                             establishment.employee_year,
                             establishment.employee_scope,
+                            COALESCE(contacts.has_email, FALSE) AS has_email,
+                            COALESCE(contacts.has_phone, FALSE) AS has_phone,
+                            COALESCE(contacts.has_website, FALSE) AS has_website,
                             establishment.established_on,
                             establishment.current_period_started_on,
                             organization.siren,
@@ -281,6 +316,8 @@ class SqlAlchemyProspectCatalogRepository:
                           ON organization.id = establishment.organization_id
                         LEFT JOIN effective_location AS location
                           ON location.opportunity_id = prospect.id
+                        LEFT JOIN effective_contacts AS contacts
+                          ON contacts.opportunity_id = prospect.id
                         WHERE prospect.id = :prospect_id
                           AND prospect.eligibility <> 'RESTRICTED'
                         """
@@ -292,8 +329,9 @@ class SqlAlchemyProspectCatalogRepository:
                 )
                 if row is None:
                     raise ProspectNotFoundError
+                contacts = self._contacts(connection, prospect_id)
                 sources = self._sources(connection, prospect_id)
-                return self._detail_from_row(row, sources)
+                return self._detail_from_row(row, contacts, sources)
         except ProspectNotFoundError:
             raise
         except SQLAlchemyError as error:
@@ -337,6 +375,9 @@ class SqlAlchemyProspectCatalogRepository:
             "organization_type": query.organization_type,
             "activity_code": query.activity_code,
             "employee_band": query.employee_band,
+            "has_email": query.has_email,
+            "has_phone": query.has_phone,
+            "has_website": query.has_website,
             "location_filter": query.location,
             "sort": query.sort,
             "direction": query.direction,
@@ -381,6 +422,9 @@ class SqlAlchemyProspectCatalogRepository:
             employee_band=cast(str | None, row["employee_band"]),
             employee_year=cast(int | None, row["employee_year"]),
             employee_scope=cast(str, row["employee_scope"]),
+            has_email=cast(bool, row["has_email"]),
+            has_phone=cast(bool, row["has_phone"]),
+            has_website=cast(bool, row["has_website"]),
             address=cls._address_from_row(row),
             distance_meters=(
                 float(row["distance_meters"]) if row["distance_meters"] is not None else None
@@ -388,6 +432,42 @@ class SqlAlchemyProspectCatalogRepository:
             location_status=cast(ProspectLocationFilter, row["location_status"]),
             location_precision=cast(str, row["location_precision"] or "UNKNOWN"),
             last_observed_at=cast(datetime, row["last_observed_at"]),
+        )
+
+    @staticmethod
+    def _contacts(connection: Connection, prospect_id: UUID) -> tuple[ProspectContact, ...]:
+        rows = connection.execute(
+            text(
+                """
+                SELECT
+                    contact.type,
+                    contact.display_value,
+                    contact.scope,
+                    contact.label,
+                    contact.source_reference
+                FROM contact_point AS contact
+                WHERE contact.contact_set_id = (
+                    SELECT contact_set.id
+                    FROM contact_set
+                    WHERE contact_set.opportunity_id = :prospect_id
+                      AND contact_set.is_current
+                    ORDER BY CASE contact_set.layer WHEN 'USER' THEN 0 ELSE 1 END
+                    LIMIT 1
+                )
+                ORDER BY contact.display_order, contact.type, contact.normalized_value
+                """
+            ),
+            {"prospect_id": prospect_id},
+        ).mappings()
+        return tuple(
+            ProspectContact(
+                type=cast(ProspectContactType, row["type"]),
+                value=cast(str, row["display_value"]),
+                scope=cast(ProspectContactScope, row["scope"]),
+                label=cast(str | None, row["label"]),
+                source_reference=cast(str | None, row["source_reference"]),
+            )
+            for row in rows
         )
 
     @staticmethod
@@ -435,6 +515,7 @@ class SqlAlchemyProspectCatalogRepository:
     def _detail_from_row(
         cls,
         row: RowMapping,
+        contacts: tuple[ProspectContact, ...],
         sources: tuple[ProspectSource, ...],
     ) -> ProspectDetail:
         summary = cls._summary_from_row(row)
@@ -459,5 +540,6 @@ class SqlAlchemyProspectCatalogRepository:
                 float(row["match_score"]) if row["match_score"] is not None else None
             ),
             first_observed_at=cast(datetime, row["first_observed_at"]),
+            contacts=contacts,
             sources=sources,
         )

@@ -987,6 +987,92 @@ class ProspectModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ContactSetModel(Base):
+    """One current or retired source/user contact collection for an opportunity."""
+
+    __tablename__ = "contact_set"
+    __table_args__ = (
+        CheckConstraint("layer IN ('SOURCE', 'USER')", name="ck_contact_set_layer"),
+        CheckConstraint(
+            "(layer = 'SOURCE' AND source_observation_id IS NOT NULL) OR "
+            "(layer = 'USER' AND source_observation_id IS NULL)",
+            name="ck_contact_set_observation_layer",
+        ),
+        CheckConstraint(
+            "is_current OR retired_at IS NOT NULL",
+            name="ck_contact_set_retired",
+        ),
+        Index(
+            "uq_contact_set_current_layer",
+            "opportunity_id",
+            "layer",
+            unique=True,
+            postgresql_where=text("is_current"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    opportunity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("opportunity.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    layer: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ContactPointModel(Base):
+    """One professional contact value in a versioned effective contact set."""
+
+    __tablename__ = "contact_point"
+    __table_args__ = (
+        CheckConstraint(
+            "type IN ('EMAIL', 'PHONE', 'WEBSITE', 'BOOKING_URL', 'CONTACT_RELAY')",
+            name="ck_contact_point_type",
+        ),
+        CheckConstraint(
+            "scope IN ('LOCAL', 'CENTRAL', 'UNKNOWN')",
+            name="ck_contact_point_scope",
+        ),
+        CheckConstraint(
+            "length(btrim(display_value)) > 0 AND length(btrim(normalized_value)) > 0",
+            name="ck_contact_point_non_empty",
+        ),
+        CheckConstraint("display_order >= 0", name="ck_contact_point_display_order"),
+        Index("ix_contact_point_type_normalized", "type", "normalized_value"),
+        Index(
+            "uq_contact_point_set_type_value_scope",
+            "contact_set_id",
+            "type",
+            "normalized_value",
+            "scope",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    contact_set_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("contact_set.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    type: Mapped[str] = mapped_column(String(32), nullable=False)
+    display_value: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_value: Mapped[str] = mapped_column(Text, nullable=False)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SourceBindingModel(Base):
     """Stable provider object attached to an opportunity, including hidden ones."""
 
@@ -1170,6 +1256,61 @@ class SourceSightingModel(Base):
         nullable=False,
     )
     seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SireneKnownStatusCheckModel(Base):
+    """Durable outcome of one targeted check for a known SIRET absent from discovery."""
+
+    __tablename__ = "sirene_known_status_check"
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('ACTIVE', 'CLOSED', 'CEASED', 'NOT_FOUND')",
+            name="ck_sirene_known_status_check_outcome",
+        ),
+        CheckConstraint(
+            "(outcome = 'NOT_FOUND' AND source_observation_id IS NULL) OR "
+            "(outcome <> 'NOT_FOUND' AND source_observation_id IS NOT NULL)",
+            name="ck_sirene_known_status_check_observation",
+        ),
+        Index(
+            "uq_sirene_known_status_check_cycle_binding",
+            "collection_cycle_id",
+            "source_binding_id",
+            unique=True,
+        ),
+        Index(
+            "uq_sirene_known_status_check_cycle_identity",
+            "collection_cycle_id",
+            "external_identity_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    collection_cycle_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("collection_cycle.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_binding_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_binding.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    external_identity_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("external_identity.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    source_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ConnectorCoverageModel(Base):

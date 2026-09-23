@@ -523,8 +523,16 @@ n'existe.
 
 Après une collecte active entièrement réussie, les SIRET déjà connus qui ne
 figurent plus dans la sélection sont contrôlés dans leur état courant. Une
-interrogation unitaire peut demander la période courante en passant la date du
+recherche exacte par SIRET demande la période courante en passant la date du
 jour au service SIRET.
+
+L'implémentation regroupe ces identifiants par requêtes exactes de 1 000 SIRET
+au maximum, limite compatible avec le contrat public de recherche
+multicritère. Elle ne cible que les fiches dont la localisation source appartient
+aux communes candidates figées dans le cycle et qui n'ont pas déjà été vues
+pendant ce cycle. La date de requête reste celle capturée au début du cycle.
+Chaque lot validé est persisté avant le suivant afin qu'une reprise ne le
+redemande pas.
 
 Les résultats sont interprétés ainsi :
 
@@ -536,6 +544,13 @@ Les résultats sont interprétés ainsi :
 - diffusion partielle `P` : fiche non prospectable, jamais « fermée » pour ce
   seul motif ;
 - absence, erreur, quota ou réponse ambiguë : aucun changement d'état.
+
+Une réponse introuvable conserve une preuve de contrôle et incrémente un
+compteur diagnostique, mais ne suffit jamais à passer le lien, l'établissement
+ou l'unité légale dans un état inactif. Une réponse trouvée en diffusion totale
+met à jour uniquement les états administratifs et de diffusion explicitement
+publiés. Elle ne remplace pas l'observation complète utilisée pour les noms,
+l'activité, l'effectif ou l'adresse.
 
 Un passage en diffusion partielle déclenche le retrait des données qui ne sont
 plus réutilisables pour la prospection. La procédure prudente est une purge de
@@ -890,11 +905,11 @@ email, téléphone ou rôle trouvé conservera l'URL exacte et la date de lectur
 Les coordonnées privées ou sans rapport professionnel ne seront pas
 collectées.
 
-## 10. Décision à fermer avant le jalon 6
+## 10. Décision à fermer avant l'activation du connecteur
 
 Les contrats techniques des deux sources sont suffisamment validés pour
-commencer le socle et les adaptateurs indépendants de cette politique. Il reste
-à faire valider avant le début du jalon 6 le
+développer le socle et les adaptateurs indépendants de cette politique. Il reste
+à faire valider avant l'activation du connecteur Sirene le
 traitement minimal et licite d'un passage Sirene en diffusion partielle :
 portée du blocage, purge, finalité et durée éventuelle d'une empreinte HMAC.
 Cette question de conformité ne bloque pas le socle applicatif du jalon 2,

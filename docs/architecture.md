@@ -2,7 +2,7 @@
 
 > Statut : cadrage technique du MVP
 >
-> Dernière mise à jour : 21 septembre 2026
+> Dernière mise à jour : 23 septembre 2026
 >
 > Périmètre : monolithe modulaire déployé sur un serveur privé
 
@@ -758,14 +758,33 @@ mapping métier validé. Les candidats Sirene de cette sélection sont actifs, e
 diffusion totale et initialement `ELIGIBLE` ; une transition future de ces
 états relève du chemin de conformité distinct.
 
+Après cette projection, une exécution dédiée `SIRENE_KNOWN_STATUS` sélectionne
+uniquement les liens Sirene déjà connus dont la localisation source appartient
+aux communes figées du cycle, mais qui ne possèdent aucune présence dans ce
+cycle. Elle les interroge par groupes disjoints de 1 000 SIRET au maximum avec
+la date figée du cycle. Chaque réponse en diffusion totale et chaque absence de
+résultat produit une preuve `sirene_known_status_check` propre au cycle. Une
+réponse explicite peut réactiver un établissement, le déclarer fermé ou
+déclarer son unité légale cessée ; un SIRET introuvable incrémente seulement le
+diagnostic d'absence et ne change aucun état administratif. Les résultats
+trouvés créent aussi une `source_sighting`, tandis que la réexécution ignore les
+contrôles déjà validés.
+
+Si l'établissement ou son unité légale est en diffusion partielle, le lot est
+refusé avant toute persistance de son identifiant et la source ciblée passe en
+échec explicite. Ce comportement fermé évite une conservation non autorisée,
+mais ne remplace pas la future procédure de purge : le connecteur de production
+reste désactivé tant que cette politique n'est pas validée et implémentée.
+
 La lecture locale expose maintenant `GET /api/v1/prospects` et
 `GET /api/v1/prospects/{id}` derrière la session privée. La liste applique par
 défaut le rayon de recherche courant ; un rayon ponctuel entre 1 mètre et
 50 kilomètres peut le réduire ou l'étendre sans modifier les réglages ni
 déclencher une collecte. PostgreSQL applique la recherche par nom, raison
-sociale, SIRET, commune ou code postal, les filtres de type, activité et
-tranche d'effectif, les tris par distance ou nom et la pagination bornée à
-100 lignes. La distance est calculée par PostGIS depuis la position de
+sociale, SIRET, commune ou code postal, les filtres de type, activité, tranche
+d'effectif et présence connue d'un email, téléphone ou site web, les tris par
+distance ou nom et la pagination bornée à 100 lignes. La distance est calculée
+par PostGIS depuis la position de
 référence courante et n'est pas persistée sur la fiche.
 
 La liste ordinaire ne retient que les fiches visibles, éligibles, en diffusion
@@ -773,11 +792,14 @@ totale et rattachées à des entités administrativement actives. Le mode
 `to_verify` constitue la première lecture de « Localisation à vérifier » : il
 retourne les adresses sans point utilisable, avec une distance nulle, sans les
 faire satisfaire artificiellement à un rayon. La fiche détaillée restitue
-l'identité publique, l'adresse et la qualité de position courantes, ainsi que
-la provenance et la fraîcheur du lien source. Ces deux routes ne contactent
-jamais Sirene ni la Géoplateforme. Les filtres de contacts et le tri par score
-seront ajoutés avec leurs projections respectives plutôt que simulés par des
-valeurs absentes.
+l'identité publique, l'adresse et la qualité de position courantes, les
+contacts professionnels effectifs, ainsi que la provenance et la fraîcheur du
+lien source. Les ensembles de contacts source et utilisateur sont versionnés
+séparément ; l'ensemble utilisateur courant remplace le source lorsqu'il
+existe. Ces deux routes ne contactent jamais Sirene ni la Géoplateforme. Une
+absence de contact signifie seulement « inconnu dans Radar ». Sirene n'en
+fournit pas et l'import n'en invente aucun. Le tri et le filtre par score seront
+ajoutés avec la projection de scoring plutôt que simulés par une valeur vide.
 
 L'interface React conserve une navigation interne minimale, sans bibliothèque
 de routage : « Prospects » et « Réglages ». Le catalogue n'est monté que dans
@@ -892,7 +914,7 @@ La solution technique prudente prévue consiste à purger la fiche de
 prospection et à conserver seulement une HMAC du SIRET ou du SIREN dans une
 liste repoussoir dédiée, avec clé hors base. Sa base légale, sa portée et sa
 durée restent un préalable juridique signalé dans `docs/data-sources.md` qui
-doit être fermé avant le début du jalon 6. Tant que cette politique n'est pas
+doit être fermé avant l'activation du connecteur. Tant que cette politique n'est pas
 validée, le connecteur Sirene ne doit pas être mis en production. Aucun
 adaptateur ne peut contourner cette vérification.
 

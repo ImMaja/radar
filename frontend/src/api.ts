@@ -130,6 +130,9 @@ export interface ProspectSummaryView {
   employee_band: string | null;
   employee_year: number | null;
   employee_scope: string;
+  has_email: boolean;
+  has_phone: boolean;
+  has_website: boolean;
   address: ProspectAddressView;
   distance_meters: number | null;
   location_status: ProspectLocation;
@@ -157,6 +160,16 @@ export interface ProspectSourceView {
   source_updated_at: string | null;
 }
 
+export type ProspectContactType = "EMAIL" | "PHONE" | "WEBSITE" | "BOOKING_URL" | "CONTACT_RELAY";
+
+export interface ProspectContactView {
+  type: ProspectContactType;
+  value: string;
+  scope: "LOCAL" | "CENTRAL" | "UNKNOWN";
+  label: string | null;
+  source_reference: string | null;
+}
+
 export interface ProspectDetailView extends ProspectSummaryView {
   description: string | null;
   siret: string | null;
@@ -175,6 +188,7 @@ export interface ProspectDetailView extends ProspectSummaryView {
   location_quality_code: string | null;
   location_match_score: number | null;
   first_observed_at: string;
+  contacts: ProspectContactView[];
   sources: ProspectSourceView[];
 }
 
@@ -184,6 +198,9 @@ export interface ProspectQuery {
   organizationType?: string;
   activityCode?: string;
   employeeBand?: string;
+  hasEmail?: boolean;
+  hasPhone?: boolean;
+  hasWebsite?: boolean;
   location: ProspectLocation;
   sort: ProspectSort;
   direction: SortDirection;
@@ -349,6 +366,9 @@ export function getProspects(query: ProspectQuery): Promise<ProspectPageView> {
   if (query.organizationType) parameters.set("organization_type", query.organizationType);
   if (query.activityCode) parameters.set("activity_code", query.activityCode);
   if (query.employeeBand) parameters.set("employee_band", query.employeeBand);
+  if (query.hasEmail) parameters.set("has_email", "true");
+  if (query.hasPhone) parameters.set("has_phone", "true");
+  if (query.hasWebsite) parameters.set("has_website", "true");
   return request<ProspectPageView>(`/api/v1/prospects?${parameters.toString()}`);
 }
 

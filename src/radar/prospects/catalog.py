@@ -8,6 +8,8 @@ from uuid import UUID
 ProspectLocationFilter = Literal["located", "to_verify"]
 ProspectSort = Literal["distance", "name"]
 SortDirection = Literal["asc", "desc"]
+ProspectContactType = Literal["EMAIL", "PHONE", "WEBSITE", "BOOKING_URL", "CONTACT_RELAY"]
+ProspectContactScope = Literal["LOCAL", "CENTRAL", "UNKNOWN"]
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,9 @@ class ProspectSearch:
     organization_type: str | None = None
     activity_code: str | None = None
     employee_band: str | None = None
+    has_email: bool = False
+    has_phone: bool = False
+    has_website: bool = False
     location: ProspectLocationFilter = "located"
     sort: ProspectSort = "distance"
     direction: SortDirection = "asc"
@@ -54,6 +59,9 @@ class ProspectSummary:
     employee_band: str | None
     employee_year: int | None
     employee_scope: str
+    has_email: bool
+    has_phone: bool
+    has_website: bool
     address: ProspectAddress
     distance_meters: float | None
     location_status: ProspectLocationFilter
@@ -88,6 +96,17 @@ class ProspectSource:
 
 
 @dataclass(frozen=True)
+class ProspectContact:
+    """One effective professional contact with its known scope and provenance hint."""
+
+    type: ProspectContactType
+    value: str
+    scope: ProspectContactScope
+    label: str | None
+    source_reference: str | None
+
+
+@dataclass(frozen=True)
 class ProspectDetail:
     """Detailed effective values for one prospect fiche."""
 
@@ -109,6 +128,7 @@ class ProspectDetail:
     location_quality_code: str | None
     location_match_score: float | None
     first_observed_at: datetime
+    contacts: tuple[ProspectContact, ...]
     sources: tuple[ProspectSource, ...]
 
 

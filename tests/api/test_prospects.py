@@ -13,6 +13,7 @@ from radar.config import Settings
 from radar.geography.contracts import GeographySettings, ReferencePosition
 from radar.prospects.catalog import (
     ProspectAddress,
+    ProspectContact,
     ProspectDetail,
     ProspectNotFoundError,
     ProspectPage,
@@ -93,6 +94,9 @@ def summary() -> ProspectSummary:
         employee_band="12",
         employee_year=2024,
         employee_scope="LOCAL",
+        has_email=True,
+        has_phone=False,
+        has_website=True,
         address=ProspectAddress(
             full_address="12 RUE SAINT PIERRE 40100 DAX",
             street_number="12",
@@ -144,6 +148,22 @@ class StubProspectBackend:
             location_quality_code=None,
             location_match_score=None,
             first_observed_at=NOW,
+            contacts=(
+                ProspectContact(
+                    type="EMAIL",
+                    value="bonjour@example.fr",
+                    scope="LOCAL",
+                    label="Accueil",
+                    source_reference="contacts.email",
+                ),
+                ProspectContact(
+                    type="WEBSITE",
+                    value="https://example.fr",
+                    scope="CENTRAL",
+                    label=None,
+                    source_reference="contacts.website",
+                ),
+            ),
             sources=(
                 ProspectSource(
                     code="SIRENE_API",
@@ -199,6 +219,8 @@ def test_prospect_list_is_private_and_passes_only_validated_local_filters() -> N
             "organization_type": "unknown",
             "activity_code": "10.71c",
             "employee_band": "12",
+            "has_email": "true",
+            "has_website": "true",
             "sort": "name",
             "direction": "desc",
             "limit": 10,
@@ -216,6 +238,8 @@ def test_prospect_list_is_private_and_passes_only_validated_local_filters() -> N
         organization_type="UNKNOWN",
         activity_code="10.71C",
         employee_band="12",
+        has_email=True,
+        has_website=True,
         sort="name",
         direction="desc",
         limit=10,
@@ -252,6 +276,14 @@ def test_prospect_detail_exposes_business_identity_and_provenance() -> None:
     assert response.status_code == 200
     assert response.json()["siret"] == "12345678901234"
     assert response.json()["address"]["municipality"] == "DAX"
+    assert response.json()["has_email"] is True
+    assert response.json()["contacts"][0] == {
+        "type": "EMAIL",
+        "value": "bonjour@example.fr",
+        "scope": "LOCAL",
+        "label": "Accueil",
+        "source_reference": "contacts.email",
+    }
     assert response.json()["sources"][0]["code"] == "SIRENE_API"
 
 

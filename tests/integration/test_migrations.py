@@ -36,7 +36,8 @@ def test_migrations_enable_postgis_and_create_the_current_schema(
                         "'data_source', 'external_identity', 'source_observation', "
                         "'collection_item', 'candidate_position', 'opportunity', "
                         "'organization', 'establishment', 'prospect', 'source_binding', "
-                        "'source_sighting', 'field_lineage', 'location_assertion')"
+                        "'source_sighting', 'field_lineage', 'location_assertion', "
+                        "'contact_set', 'contact_point', 'sirene_known_status_check')"
                     )
                 ).scalars()
             )
@@ -82,6 +83,9 @@ def test_migrations_enable_postgis_and_create_the_current_schema(
         "source_sighting",
         "field_lineage",
         "location_assertion",
+        "contact_set",
+        "contact_point",
+        "sirene_known_status_check",
     }
     assert "ix_commune_boundary_boundary" in municipality_indexes
     assert "ix_commune_boundary_boundary_geography" in municipality_indexes

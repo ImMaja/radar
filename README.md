@@ -48,11 +48,20 @@ stables liées au SIRET. Les candidats hors du rayon exact sont comptabilisés
 sans créer de fiche ; ceux dont la position reste inconnue sont conservés pour
 la liste « Localisation à vérifier ». Une API privée permet désormais de
 rechercher et paginer les prospects locaux, de les filtrer par rayon, type,
-activité, effectif et état de localisation, de les trier par nom ou distance,
-puis d'ouvrir leur détail avec la provenance courante. Toutes ces lectures
+activité, effectif, moyens de contact connus et état de localisation, de les
+trier par nom ou distance, puis d'ouvrir leur détail avec les contacts effectifs
+et la provenance courante. Les contacts sont versionnés séparément par couche
+source et utilisateur ; Sirene n'en fournissant pas, Radar n'en invente aucun.
+Le contrôle ciblé des SIRET déjà connus mais absents d'une nouvelle sélection
+est également implémenté par lots de 1 000 au maximum. Il ne ferme jamais une
+fiche par déduction : seuls un état fermé ou une unité légale cessée explicitement
+renvoyés par Sirene modifient les états administratifs. Un résultat introuvable
+reste une preuve d'absence sans fermeture. Les contrôles sont persistés et une
+reprise ne répète pas les lots déjà validés. Toutes les lectures du catalogue
 restent dans PostgreSQL/PostGIS et n'appellent aucun fournisseur. L'interface
-React propose la même liste paginée, les filtres, l'onglet « Localisation à
-vérifier » et la fiche détaillée avec ses sources. Le vrai millésime 2026 et la
+React propose la même liste paginée, les filtres email, téléphone et site web,
+l'onglet « Localisation à vérifier » et la fiche détaillée avec ses contacts et
+ses sources. Le vrai millésime 2026 et la
 sélection autour de Dax ont été validés. Le connecteur reste désactivé jusqu'à
 la composition complète du worker et à la résolution du point de conformité
 sur la diffusion partielle.

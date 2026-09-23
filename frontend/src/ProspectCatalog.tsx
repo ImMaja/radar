@@ -27,6 +27,9 @@ interface FilterDraft {
   organizationType: string;
   activityCode: string;
   employeeBand: string;
+  hasEmail: boolean;
+  hasPhone: boolean;
+  hasWebsite: boolean;
   sort: ProspectSort;
   direction: SortDirection;
 }
@@ -37,6 +40,9 @@ const initialDraft: FilterDraft = {
   organizationType: "",
   activityCode: "",
   employeeBand: "",
+  hasEmail: false,
+  hasPhone: false,
+  hasWebsite: false,
   sort: "distance",
   direction: "asc",
 };
@@ -88,6 +94,26 @@ function locationPrecisionLabel(value: string): string {
     STREET: "Voie",
     MUNICIPALITY: "Commune",
     UNKNOWN: "Précision inconnue",
+  };
+  return labels[value] ?? value;
+}
+
+function contactTypeLabel(value: string): string {
+  const labels: Record<string, string> = {
+    EMAIL: "Email",
+    PHONE: "Téléphone",
+    WEBSITE: "Site web",
+    BOOKING_URL: "Réservation",
+    CONTACT_RELAY: "Relais de contact",
+  };
+  return labels[value] ?? value;
+}
+
+function contactScopeLabel(value: string): string {
+  const labels: Record<string, string> = {
+    LOCAL: "Contact local",
+    CENTRAL: "Contact central",
+    UNKNOWN: "Portée inconnue",
   };
   return labels[value] ?? value;
 }
@@ -192,6 +218,9 @@ export function ProspectCatalog({
       organizationType: optionalFilter(draft.organizationType),
       activityCode: optionalFilter(draft.activityCode),
       employeeBand: optionalFilter(draft.employeeBand),
+      hasEmail: draft.hasEmail || undefined,
+      hasPhone: draft.hasPhone || undefined,
+      hasWebsite: draft.hasWebsite || undefined,
       location: current.location,
       sort: draft.sort,
       direction: draft.direction,
@@ -331,6 +360,26 @@ export function ProspectCatalog({
               </section>
             </div>
 
+            <section className="contacts" aria-labelledby="contacts-title">
+              <h3 id="contacts-title">Contacts professionnels</h3>
+              {detail.contacts.length === 0 ? (
+                <p className="hint">Aucun moyen de contact connu dans les sources actuelles.</p>
+              ) : (
+                <ul>
+                  {detail.contacts.map((contact) => (
+                    <li key={`${contact.type}-${contact.value}-${contact.scope}`}>
+                      <span>{contactTypeLabel(contact.type)}</span>
+                      <strong>{contact.value}</strong>
+                      <small>
+                        {contactScopeLabel(contact.scope)}
+                        {contact.label ? ` · ${contact.label}` : ""}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
             <section className="provenance" aria-labelledby="provenance-title">
               <h3 id="provenance-title">Provenance</h3>
               {detail.sources.length === 0 ? (
@@ -459,6 +508,33 @@ export function ProspectCatalog({
                 onChange={(event) => setDraft({ ...draft, employeeBand: event.target.value })}
               />
             </div>
+            <fieldset className="contact-filters">
+              <legend>Moyens de contact connus</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={draft.hasEmail}
+                  onChange={(event) => setDraft({ ...draft, hasEmail: event.target.checked })}
+                />
+                Email
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={draft.hasPhone}
+                  onChange={(event) => setDraft({ ...draft, hasPhone: event.target.checked })}
+                />
+                Téléphone
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={draft.hasWebsite}
+                  onChange={(event) => setDraft({ ...draft, hasWebsite: event.target.checked })}
+                />
+                Site web
+              </label>
+            </fieldset>
             <div>
               <label htmlFor="prospect-sort">Trier par</label>
               <select
@@ -535,6 +611,9 @@ export function ProspectCatalog({
                         : "Effectif inconnu"}
                     </li>
                     <li>{locationPrecisionLabel(prospect.location_precision)}</li>
+                    {prospect.has_email && <li>Email</li>}
+                    {prospect.has_phone && <li>Téléphone</li>}
+                    {prospect.has_website && <li>Site web</li>}
                   </ul>
                 </div>
                 <button
