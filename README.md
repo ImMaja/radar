@@ -62,9 +62,11 @@ restent dans PostgreSQL/PostGIS et n'appellent aucun fournisseur. L'interface
 React propose la même liste paginée, les filtres email, téléphone et site web,
 l'onglet « Localisation à vérifier » et la fiche détaillée avec ses contacts et
 ses sources. Le vrai millésime 2026 et la
-sélection autour de Dax ont été validés. Le connecteur reste désactivé jusqu'à
-la composition complète du worker et à la résolution du point de conformité
-sur la diffusion partielle.
+sélection autour de Dax ont été validés. Une diffusion partielle provoque
+désormais une purge atomique sans liste repoussoir identifiante, et la chaîne
+complète est assemblée dans le worker. Le connecteur n'est proposé dans
+l'interface que lorsqu'une clé Sirene et un fichier mensuel local accompagné
+de sa provenance complète sont configurés.
 
 Le MVP est prévu pour un seul utilisateur et un seul food truck. Il sera
 accessible sur Internet derrière une authentification, sans exposer
@@ -170,6 +172,24 @@ officiel. La migration ne contacte jamais une source externe :
 La commande n'active la nouvelle version qu'après validation intégrale par
 PostGIS. Le téléchargement automatisé du prochain millésime n'est pas encore
 implémenté.
+
+Le fichier mensuel Parquet de géolocalisation Sirene est lui aussi téléchargé
+manuellement pour le moment. Renseigner dans `.env.local` son chemin privé,
+l'identifiant et l'URL exacte de la ressource, ainsi que son instant de
+téléchargement. Les variables commentées de `.env.example` documentent le
+contrat complet ; l'empreinte SHA-1 et la taille doivent être ajoutées
+lorsqu'elles sont publiées ou connues. Radar garde le connecteur désactivé si
+le fichier n'existe pas ou si la configuration est incomplète.
+
+Après cette configuration et l'import du référentiel communal, lancer le worker
+dans un second terminal :
+
+```bash
+.venv/bin/radar-worker
+```
+
+L'option `--once` réserve au plus un travail puis arrête le processus ; elle est
+utile pour un test local contrôlé.
 
 Avec Podman Compose, remplacer `docker compose` par `podman compose`.
 L'application répond ensuite sur `http://127.0.0.1:8000`. Les contrôles

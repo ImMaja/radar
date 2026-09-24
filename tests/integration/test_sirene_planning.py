@@ -2,8 +2,8 @@
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -35,6 +35,9 @@ from radar.persistence.sirene_position_resolution import (
 )
 from radar.persistence.sirene_projection import SqlAlchemySireneProspectProjectionRepository
 from radar.persistence.sirene_staging import SqlAlchemySireneCandidateStagingRepository
+from radar.persistence.sirene_status_reconciliation import (
+    SqlAlchemySireneKnownStatusRepository,
+)
 from radar.prospects.contracts import (
     Activity,
     EstablishmentAddress,
@@ -53,11 +56,14 @@ from radar.prospects.planning import (
 from radar.prospects.position_resolution import SirenePositionResolutionService
 from radar.prospects.projection import SireneProspectProjectionService
 from radar.prospects.sirene_collection import SireneBatchEnumerator, SireneExecutionError
+from radar.prospects.sirene_pipeline import SireneProspectCollectionExecutor
 from radar.prospects.staging import SireneCandidatePageStager
+from radar.prospects.status_reconciliation import SireneKnownStatusReconciliationService
 from radar.providers.sirene import (
     SireneBatchSummary,
     SirenePage,
     SireneServiceInformation,
+    SireneStatusLookup,
     SireneTemporaryError,
 )
 from radar.reference_data.contracts import MunicipalityReleaseSource
@@ -316,6 +322,63 @@ class TemporaryThenSuccessfulReader(FixtureSireneReader):
             )
             raise SireneTemporaryError("fixture interruption")
         return super().collect_batch(municipality_codes, at_date, on_page)
+
+
+class SingleCandidatePipelineReader:
+    """Serve one complete candidate cycle without external network access."""
+
+    def __init__(self, candidate: ProspectCandidate) -> None:
+        self._candidate = candidate
+        self.status_calls = 0
+
+    def service_information(self) -> SireneServiceInformation:
+        return SireneServiceInformation(
+            service_state="UP",
+            service_version="3.11-fixture",
+            freshness=(("Établissements", "2026-09-20T07:44:27"),),
+        )
+
+    def collect_batch(
+        self,
+        municipality_codes: tuple[str, ...],
+        at_date: str,
+        on_page: Callable[[SirenePage], None],
+    ) -> SireneBatchSummary:
+        assert municipality_codes == ("40088",)
+        assert at_date == "2026-09-20"
+        on_page(
+            SirenePage(
+                number=1,
+                announced_total=1,
+                received_count=1,
+                importable_candidates=(self._candidate,),
+                rejection_counts={},
+                next_cursor_fingerprint="a" * 64,
+                terminal=False,
+            )
+        )
+        on_page(
+            SirenePage(
+                number=2,
+                announced_total=1,
+                received_count=0,
+                importable_candidates=(),
+                rejection_counts={},
+                next_cursor_fingerprint=None,
+                terminal=True,
+            )
+        )
+        return SireneBatchSummary(1, 1, 1, 1, 2, {})
+
+    def lookup_establishment_statuses(
+        self,
+        sirets: Sequence[str],
+        at_date: str,
+    ) -> SireneStatusLookup:
+        del at_date
+        self.status_calls += 1
+        requested = tuple(sirets)
+        return SireneStatusLookup(requested, (), requested)
 
 
 class OrderingPageHandler:
@@ -736,7 +799,7 @@ def test_worker_retries_a_whole_interrupted_batch_without_losing_page_history(
         engine.dispose()
 
 
-def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
+def test_runs_retryable_sirene_pipeline_and_refreshes_existing_prospect(
     integration_database_url: str,
     tmp_path: Path,
 ) -> None:
@@ -1462,5 +1525,479 @@ def test_stages_one_observation_idempotently_across_a_whole_batch_retry(
             ("PROSPECT_EMPLOYEE_BAND", 4),
             ("PROSPECT_ORGANIZATION_TYPE", 4),
         ]
+
+        with engine.begin() as connection:
+            opportunity_id = connection.execute(
+                text(
+                    """
+                    SELECT prospect.id
+                    FROM prospect
+                    JOIN establishment
+                      ON establishment.id = prospect.establishment_id
+                    WHERE establishment.siret = '12345678901234'
+                    """
+                )
+            ).scalar_one()
+            contact_set_id = connection.execute(
+                text(
+                    """
+                    INSERT INTO contact_set (
+                        id,
+                        opportunity_id,
+                        layer,
+                        source_observation_id,
+                        is_current,
+                        created_at,
+                        retired_at
+                    ) VALUES (
+                        gen_random_uuid(),
+                        :opportunity_id,
+                        'USER',
+                        NULL,
+                        TRUE,
+                        :now,
+                        NULL
+                    )
+                    RETURNING id
+                    """
+                ),
+                {"opportunity_id": opportunity_id, "now": clock.now},
+            ).scalar_one()
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO contact_point (
+                        id,
+                        contact_set_id,
+                        type,
+                        display_value,
+                        normalized_value,
+                        scope,
+                        label,
+                        source_reference,
+                        display_order,
+                        created_at
+                    ) VALUES (
+                        gen_random_uuid(),
+                        :contact_set_id,
+                        'EMAIL',
+                        'contact@atelier.example',
+                        'contact@atelier.example',
+                        'LOCAL',
+                        'Accueil',
+                        NULL,
+                        0,
+                        :now
+                    )
+                    """
+                ),
+                {"contact_set_id": contact_set_id, "now": clock.now},
+            )
+            connection.execute(
+                text(
+                    """
+                    UPDATE opportunity
+                    SET
+                        hidden_at = :now,
+                        hidden_reason = 'NOT_RELEVANT',
+                        updated_at = :now
+                    WHERE id = :opportunity_id
+                    """
+                ),
+                {"opportunity_id": opportunity_id, "now": clock.now},
+            )
+
+        collection_repository.finish(
+            second,
+            "sirene-staging-test",
+            "SUCCEEDED",
+            {"observations": 5},
+            None,
+            {},
+            {},
+            clock.now,
+        )
+        clock.now += timedelta(days=1)
+        refreshed_candidate = replace(
+            candidate,
+            establishment_names=("Atelier renouvelé",),
+            legal_name="Société actualisée",
+            activity=Activity("56.10C", "NAFRev2"),
+            employee_band="21",
+            employee_year=2026,
+            address=replace(candidate.address, street_number="18"),
+            establishment_processed_at="2026-09-21T12:00:00",
+            legal_unit_processed_at="2026-09-21T11:00:00",
+        )
+        refreshed_page = SirenePage(
+            number=1,
+            announced_total=5,
+            received_count=5,
+            importable_candidates=(
+                refreshed_candidate,
+                candidate_without_coordinates,
+                candidate_with_file_fallback,
+                candidate_unresolved,
+                candidate_outside_radius,
+            ),
+            rejection_counts={},
+            next_cursor_fingerprint="f" * 64,
+            terminal=False,
+        )
+        refreshed_terminal_page = SirenePage(
+            number=2,
+            announced_total=5,
+            received_count=0,
+            importable_candidates=(),
+            rejection_counts={},
+            next_cursor_fingerprint=None,
+            terminal=True,
+        )
+        enqueued_refresh = collection_repository.enqueue(
+            "SIRENE",
+            "MANUAL",
+            ConnectorSpecification("sirene-test", "e" * 64),
+            clock.now,
+        )
+        assert enqueued_refresh.created is True
+        refresh = collection_repository.reserve_next(
+            "sirene-staging-test",
+            ("SIRENE",),
+            clock.now,
+            clock.now + timedelta(minutes=5),
+        )
+        assert refresh is not None
+        refresh_plan = planning_service.plan(refresh)
+        execution_repository.start_source(refresh, refresh_plan, information, clock.now)
+        refresh_batch = refresh_plan.batches[0]
+        assert execution_repository.start_batch(refresh, refresh_batch, clock.now) is True
+        stager.handle(refresh, refresh_batch, refreshed_page)
+        execution_repository.record_page(refresh, refresh_batch, refreshed_page, clock.now)
+        stager.handle(refresh, refresh_batch, refreshed_terminal_page)
+        execution_repository.record_page(
+            refresh,
+            refresh_batch,
+            refreshed_terminal_page,
+            clock.now,
+        )
+        execution_repository.complete_batch(
+            refresh,
+            refresh_batch,
+            SireneBatchSummary(
+                announced_total=5,
+                received_count=5,
+                unique_siret_count=5,
+                importable_count=5,
+                page_count=2,
+                rejection_counts={},
+            ),
+            clock.now,
+        )
+        execution_repository.finish_source(refresh, refresh_plan, clock.now)
+        refresh_geolocation = geolocation_service.import_file(
+            refresh,
+            geolocation_path,
+            geolocation_source,
+        )
+        assert refresh_geolocation.requested_siret_count == 5
+        assert refresh_geolocation.matched_siret_count == 4
+        resolution_service.resolve(refresh)
+        refresh_fallback = fallback_service.geocode_pending(refresh)
+        assert refresh_fallback.requested_count == 2
+        final_refresh_resolution = resolution_service.resolve(refresh)
+        assert final_refresh_resolution.geocoding_required_count == 0
+
+        refresh_projection = projection_service.project(refresh)
+        repeated_refresh_projection = projection_service.project(refresh)
+        assert refresh_projection.requested_count == 5
+        assert refresh_projection.created_count == 0
+        assert refresh_projection.updated_count == 1
+        assert refresh_projection.unchanged_count == 3
+        assert refresh_projection.counted_only_count == 1
+        assert repeated_refresh_projection == refresh_projection
+
+        collection_repository.finish(
+            refresh,
+            "sirene-staging-test",
+            "SUCCEEDED",
+            {"observations": 5},
+            None,
+            {},
+            {},
+            clock.now,
+        )
+        with engine.connect() as connection:
+            refreshed = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            opportunity.id,
+                            opportunity.hidden_at,
+                            opportunity.hidden_reason,
+                            organization.legal_name,
+                            establishment.activity_code,
+                            establishment.employee_band,
+                            prospect.source_display_name,
+                            binding.current_observation_id,
+                            sighting.collection_cycle_id,
+                            contact.type AS contact_type,
+                            contact.normalized_value AS contact_value,
+                            location.full_address,
+                            location.address_observation_id
+                        FROM opportunity
+                        JOIN prospect ON prospect.id = opportunity.id
+                        JOIN establishment
+                          ON establishment.id = prospect.establishment_id
+                        JOIN organization
+                          ON organization.id = establishment.organization_id
+                        JOIN source_binding AS binding
+                          ON binding.opportunity_id = opportunity.id
+                         AND binding.data_source_code = 'SIRENE_API'
+                        JOIN source_sighting AS sighting
+                          ON sighting.source_binding_id = binding.id
+                         AND sighting.collection_cycle_id = :cycle_id
+                        JOIN contact_set
+                          ON contact_set.opportunity_id = opportunity.id
+                         AND contact_set.layer = 'USER'
+                         AND contact_set.is_current
+                        JOIN contact_point AS contact
+                          ON contact.contact_set_id = contact_set.id
+                        JOIN location_assertion AS location
+                          ON location.opportunity_id = opportunity.id
+                         AND location.layer = 'SOURCE'
+                         AND location.is_current
+                        WHERE establishment.siret = '12345678901234'
+                        """
+                    ),
+                    {"cycle_id": refresh.cycle_id},
+                )
+                .mappings()
+                .one()
+            )
+            refresh_counts = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            (SELECT count(*) FROM organization) AS organizations,
+                            (SELECT count(*) FROM establishment) AS establishments,
+                            (SELECT count(*) FROM opportunity) AS opportunities,
+                            (SELECT count(*) FROM prospect) AS prospects,
+                            (SELECT count(*) FROM source_binding) AS source_bindings,
+                            (SELECT count(*) FROM contact_set) AS contact_sets,
+                            (SELECT count(*) FROM contact_point) AS contact_points,
+                            (SELECT count(*) FROM location_assertion) AS locations,
+                            (SELECT count(*) FROM location_assertion
+                             WHERE is_current) AS current_locations,
+                            (SELECT count(*) FROM connector_coverage
+                             WHERE connector = 'SIRENE') AS coverages
+                        """
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            current_observation = connection.execute(
+                text(
+                    """
+                    SELECT payload
+                    FROM source_observation
+                    WHERE id = :observation_id
+                    """
+                ),
+                {"observation_id": refreshed["current_observation_id"]},
+            ).scalar_one()
+
+        assert refreshed["id"] == opportunity_id
+        assert refreshed["hidden_at"] is not None
+        assert refreshed["hidden_reason"] == "NOT_RELEVANT"
+        assert refreshed["legal_name"] == "Société actualisée"
+        assert refreshed["activity_code"] == "56.10C"
+        assert refreshed["employee_band"] == "21"
+        assert refreshed["source_display_name"] == "Atelier renouvelé"
+        assert refreshed["collection_cycle_id"] == refresh.cycle_id
+        assert refreshed["contact_type"] == "EMAIL"
+        assert refreshed["contact_value"] == "contact@atelier.example"
+        assert refreshed["full_address"] == "18 RUE SAINT PIERRE 40100 DAX"
+        assert refreshed["address_observation_id"] == refreshed["current_observation_id"]
+        assert current_observation["establishment_names"] == ["Atelier renouvelé"]
+        assert dict(refresh_counts) == {
+            "organizations": 4,
+            "establishments": 4,
+            "opportunities": 4,
+            "prospects": 4,
+            "source_bindings": 4,
+            "contact_sets": 1,
+            "contact_points": 1,
+            "locations": 5,
+            "current_locations": 4,
+            "coverages": 2,
+        }
+    finally:
+        engine.dispose()
+
+
+def test_worker_runs_the_composed_sirene_pipeline_to_terminal_coverage(
+    integration_database_url: str,
+    tmp_path: Path,
+) -> None:
+    release_path = tmp_path / "communes-pipeline.geojson"
+    write_release(release_path, ("40088",))
+    geolocation_path = tmp_path / "sirene-geolocation-pipeline.parquet"
+
+    confirm_dax(integration_database_url)
+    engine = create_engine(integration_database_url)
+    clock = MutableClock(NOW + timedelta(seconds=1))
+    try:
+        municipality_reference = MunicipalityReferenceService(
+            SqlAlchemyMunicipalityReferenceRepository(engine),
+            clock=clock,
+        )
+        municipality_reference.import_file(release_path, release_source("pipeline-2026"))
+        SqlAlchemyGeographyRepository(engine).update_radii(50_000, 50_000, clock.now)
+
+        with engine.connect() as connection:
+            lambert = connection.execute(
+                text(
+                    """
+                    SELECT
+                        ST_X(ST_Transform(
+                            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326),
+                            2154
+                        )),
+                        ST_Y(ST_Transform(
+                            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326),
+                            2154
+                        ))
+                    """
+                ),
+                {"longitude": DAX_LONGITUDE, "latitude": DAX_LATITUDE},
+            ).one()
+        candidate = staging_candidate(LambertCoordinates(float(lambert[0]), float(lambert[1])))
+        write_geolocation_file(
+            geolocation_path,
+            [
+                (
+                    candidate.siret,
+                    float(lambert[0]),
+                    float(lambert[1]),
+                    "11",
+                    "2154",
+                    "40088",
+                    0.0,
+                    DAX_LATITUDE,
+                    DAX_LONGITUDE,
+                )
+            ],
+        )
+        content = geolocation_path.read_bytes()
+        source = SireneGeolocationReleaseSource(
+            resource_identifier="sirene-geolocation-pipeline-2026-09",
+            resource_url="https://example.data.gouv.fr/pipeline.parquet",
+            published_on=None,
+            retrieved_at=clock.now,
+            license_name="Licence Ouverte 2.0",
+            expected_sha1=hashlib.sha1(content, usedforsecurity=False).hexdigest(),
+            expected_size_bytes=len(content),
+        )
+        reader = SingleCandidatePipelineReader(candidate)
+        planner = SireneCollectionPlanningService(
+            municipality_reference,
+            SqlAlchemySirenePlanRepository(engine),
+            clock=clock,
+        )
+        enumerator = SireneBatchEnumerator(
+            planner,
+            SqlAlchemySireneExecutionRepository(engine),
+            reader,
+            SireneCandidatePageStager(
+                SqlAlchemySireneCandidateStagingRepository(engine),
+                clock=clock,
+            ),
+            clock=clock,
+        )
+        geocoder = FixtureFallbackGeocoder()
+        executor = SireneProspectCollectionExecutor(
+            enumerator,
+            SireneGeolocationImportService(
+                SqlAlchemySireneGeolocationRepository(engine),
+                clock=clock,
+            ),
+            geolocation_path,
+            source,
+            SirenePositionResolutionService(
+                SqlAlchemySirenePositionResolutionRepository(engine),
+                clock=clock,
+            ),
+            SireneFallbackGeocodingService(
+                SqlAlchemySireneFallbackGeocodingRepository(engine),
+                geocoder,
+                clock=clock,
+                monotonic=lambda: 1.0,
+                sleeper=lambda _seconds: None,
+            ),
+            SireneProspectProjectionService(
+                SqlAlchemySireneProspectProjectionRepository(engine),
+                clock=clock,
+            ),
+            SireneKnownStatusReconciliationService(
+                SqlAlchemySireneKnownStatusRepository(engine),
+                reader,
+                clock=clock,
+            ),
+        )
+        collection_repository = SqlAlchemyCollectionRepository(engine)
+        enqueued = collection_repository.enqueue(
+            "SIRENE",
+            "MANUAL",
+            ConnectorSpecification("sirene-pipeline-test", "f" * 64),
+            NOW,
+        )
+        worker = CollectionWorker(
+            collection_repository,
+            {"SIRENE": executor},
+            "sirene-pipeline-worker",
+            clock=clock,
+        )
+
+        assert worker.run_once() is True
+        dashboard = collection_repository.dashboard()
+        sirene = next(item for item in dashboard.connectors if item.connector == "SIRENE")
+        assert sirene.latest_job is not None
+        assert sirene.latest_job.id == enqueued.job.id
+        assert sirene.latest_job.state == "SUCCEEDED"
+        assert sirene.coverage is not None
+        assert reader.status_calls == 0
+        assert geocoder.queries == []
+
+        with engine.connect() as connection:
+            persisted = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            (SELECT count(*) FROM prospect) AS prospects,
+                            (SELECT count(*) FROM connector_coverage
+                             WHERE cycle_id = :cycle_id) AS coverages,
+                            (SELECT count(*) FROM collection_source_run
+                             WHERE collection_cycle_id = :cycle_id
+                               AND status = 'SUCCEEDED') AS successful_sources,
+                            (SELECT counters ->> 'known_status_restricted_count'
+                             FROM collection_cycle
+                             WHERE id = :cycle_id) AS restricted_count
+                        """
+                    ),
+                    {"cycle_id": enqueued.job.cycle_id},
+                )
+                .mappings()
+                .one()
+            )
+        assert dict(persisted) == {
+            "prospects": 1,
+            "coverages": 1,
+            "successful_sources": 4,
+            "restricted_count": "0",
+        }
     finally:
         engine.dispose()

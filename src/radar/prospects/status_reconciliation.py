@@ -44,6 +44,7 @@ class SireneKnownStatusSummary:
     active_count: int
     closed_count: int
     ceased_count: int
+    restricted_count: int
     not_found_count: int
 
     def validate(self) -> None:
@@ -54,6 +55,7 @@ class SireneKnownStatusSummary:
             self.active_count,
             self.closed_count,
             self.ceased_count,
+            self.restricted_count,
             self.not_found_count,
         )
         if any(count < 0 for count in counts):
@@ -135,7 +137,7 @@ class SireneKnownStatusReconciliationService:
         reservation: ReservedCollection,
         reporter: ProgressReporter,
     ) -> SireneKnownStatusSummary:
-        """Resume targeted checks and apply only explicit full-diffusion states."""
+        """Resume targeted checks and apply explicit states or required purges."""
 
         if reservation.connector != "SIRENE":
             raise ValueError("only a Sirene collection can reconcile known SIRET")
@@ -182,16 +184,6 @@ class SireneKnownStatusReconciliationService:
                     observations_preserved=completed,
                 ) from error
 
-            if any(status.has_partial_diffusion for status in lookup.statuses):
-                self._fail_permanently(
-                    reservation,
-                    "sirene_partial_diffusion_policy_required",
-                )
-                raise PermanentCollectionError(
-                    "sirene_partial_diffusion_policy_required",
-                    "Une diffusion partielle exige la politique de purge validée avant publication.",
-                    observations_preserved=completed,
-                )
             self._backend.record(reservation, lookup, self._clock())
             completed += len(lookup.requested_sirets)
             reporter.update(

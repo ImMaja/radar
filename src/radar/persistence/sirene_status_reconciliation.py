@@ -18,9 +18,9 @@ from radar.providers.sirene import SireneEstablishmentStatus, SireneStatusLookup
 
 _SOURCE = "SIRENE_KNOWN_STATUS"
 _DATA_SOURCE = "SIRENE_API"
-_CONTRACT_VERSION = "sirene-known-status-v1"
-_SCHEMA_VERSION = "sirene-known-status-v1"
-_ADAPTER_VERSION = "sirene-3.11-known-status-v1"
+_CONTRACT_VERSION = "sirene-known-status-v2"
+_SCHEMA_VERSION = "sirene-known-status-v2"
+_ADAPTER_VERSION = "sirene-3.11-known-status-v2"
 _INPUT_RECORDSET = """
 jsonb_to_recordset(CAST(:records AS jsonb)) AS input(
     siret text,
@@ -33,6 +33,13 @@ jsonb_to_recordset(CAST(:records AS jsonb)) AS input(
     observation_id uuid,
     content_fingerprint text,
     payload jsonb
+)
+"""
+_RESTRICTED_RECORDSET = """
+jsonb_to_recordset(CAST(:restricted_records AS jsonb)) AS input(
+    siret text,
+    siren text,
+    legal_unit_restricted boolean
 )
 """
 
@@ -62,7 +69,7 @@ def _fingerprint(payload: dict[str, object]) -> str:
 
 
 class SqlAlchemySireneKnownStatusRepository:
-    """Persist targeted full-diffusion checks and explicit state changes."""
+    """Persist targeted checks, explicit states, and restriction purges."""
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
@@ -107,12 +114,18 @@ class SqlAlchemySireneKnownStatusRepository:
         lookup: SireneStatusLookup,
         now: datetime,
     ) -> None:
-        """Persist one exact lookup atomically and apply only explicit states."""
+        """Persist one lookup atomically, purging any restricted targets."""
 
-        records = self._records(lookup)
+        records, restricted_records = self._records(lookup)
         parameters: dict[str, object] = {
             "cycle_id": reservation.cycle_id,
             "records": json.dumps(records, ensure_ascii=False, separators=(",", ":")),
+            "restricted_records": json.dumps(
+                restricted_records,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            "restricted_count": len(restricted_records),
             "data_source": _DATA_SOURCE,
             "adapter_version": _ADAPTER_VERSION,
             "schema_version": _SCHEMA_VERSION,
@@ -123,10 +136,14 @@ class SqlAlchemySireneKnownStatusRepository:
                 self._require_active_attempt(connection, reservation)
                 self._require_running_source(connection, reservation)
                 self._create_input(connection, parameters)
-                input_count = connection.execute(
+                self._create_restricted_targets(connection, parameters)
+                normal_count = connection.execute(
                     text("SELECT count(*) FROM sirene_known_status_input")
                 ).scalar_one()
-                if input_count != len(records):
+                restricted_count = connection.execute(
+                    text("SELECT count(*) FROM sirene_restricted_input")
+                ).scalar_one()
+                if normal_count != len(records) or restricted_count != len(restricted_records):
                     raise SireneKnownStatusError(
                         "a targeted Sirene lookup no longer matches its pending identities"
                     )
@@ -138,6 +155,7 @@ class SqlAlchemySireneKnownStatusRepository:
                 self._touch_changed_opportunities(connection, parameters)
                 self._insert_sightings(connection, parameters)
                 self._update_bindings(connection, parameters)
+                self._purge_restricted_targets(connection, parameters)
                 self._increment_request_count(connection, parameters)
         except SireneKnownStatusError:
             raise
@@ -244,6 +262,7 @@ class SqlAlchemySireneKnownStatusRepository:
                                 "active_count": summary.active_count,
                                 "closed_count": summary.closed_count,
                                 "ceased_count": summary.ceased_count,
+                                "restricted_count": summary.restricted_count,
                                 "not_found_count": summary.not_found_count,
                             }
                         ),
@@ -263,7 +282,9 @@ class SqlAlchemySireneKnownStatusRepository:
             ) from error
 
     @staticmethod
-    def _records(lookup: SireneStatusLookup) -> list[dict[str, object]]:
+    def _records(
+        lookup: SireneStatusLookup,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         requested = tuple(lookup.requested_sirets)
         if not requested or len(set(requested)) != len(requested):
             raise SireneKnownStatusError("a targeted Sirene lookup has invalid requests")
@@ -277,6 +298,7 @@ class SqlAlchemySireneKnownStatusRepository:
             raise SireneKnownStatusError("a targeted Sirene lookup does not reconcile")
         legal_states: dict[str, tuple[str, str]] = {}
         records: list[dict[str, object]] = []
+        restricted_records: list[dict[str, object]] = []
         for siret in requested:
             status = statuses.get(siret)
             if status is None:
@@ -295,10 +317,6 @@ class SqlAlchemySireneKnownStatusRepository:
                     }
                 )
                 continue
-            if status.has_partial_diffusion:
-                raise SireneKnownStatusError(
-                    "partial diffusion cannot enter the full-diffusion status projection"
-                )
             legal_state = (
                 status.legal_unit_administrative_state,
                 status.legal_unit_diffusion_status,
@@ -308,6 +326,15 @@ class SqlAlchemySireneKnownStatusRepository:
                 raise SireneKnownStatusError(
                     "targeted Sirene establishments disagree on their legal-unit state"
                 )
+            if status.has_partial_diffusion:
+                restricted_records.append(
+                    {
+                        "siret": status.siret,
+                        "siren": status.siren,
+                        "legal_unit_restricted": (status.legal_unit_diffusion_status == "PARTIAL"),
+                    }
+                )
+                continue
             payload = _payload(status)
             records.append(
                 {
@@ -323,7 +350,7 @@ class SqlAlchemySireneKnownStatusRepository:
                     "payload": payload,
                 }
             )
-        return records
+        return records, restricted_records
 
     @staticmethod
     def _require_active_attempt(
@@ -528,12 +555,20 @@ class SqlAlchemySireneKnownStatusRepository:
         value = connection.execute(
             text(
                 """
-                SELECT count(*)
-                FROM sirene_known_status_check
-                WHERE collection_cycle_id = :cycle_id
+                SELECT
+                    (SELECT count(*)
+                     FROM sirene_known_status_check
+                     WHERE collection_cycle_id = :cycle_id)
+                    + COALESCE(
+                        (SELECT CAST(counters ->> 'restricted_count' AS integer)
+                         FROM collection_source_run
+                         WHERE collection_cycle_id = :cycle_id
+                           AND source = :source),
+                        0
+                    )
                 """
             ),
-            {"cycle_id": reservation.cycle_id},
+            {"cycle_id": reservation.cycle_id, "source": _SOURCE},
         ).scalar_one()
         if not isinstance(value, int):
             raise SireneKnownStatusError("the Sirene known-status count is invalid")
@@ -621,6 +656,458 @@ class SqlAlchemySireneKnownStatusRepository:
                 """
             ),
             parameters,
+        )
+
+    @staticmethod
+    def _create_restricted_targets(
+        connection: Connection,
+        parameters: dict[str, object],
+    ) -> None:
+        connection.execute(
+            text(
+                f"""
+                CREATE TEMPORARY TABLE sirene_restricted_input ON COMMIT DROP AS
+                SELECT
+                    input.*,
+                    identity.id AS external_identity_id,
+                    binding.id AS source_binding_id,
+                    binding.opportunity_id,
+                    establishment.id AS establishment_id,
+                    establishment.organization_id
+                FROM {_RESTRICTED_RECORDSET}
+                JOIN external_identity AS identity
+                  ON identity.authority = 'INSEE'
+                 AND identity.namespace = 'SIRET'
+                 AND identity.canonical_value = input.siret
+                 AND identity.restricted_at IS NULL
+                JOIN source_binding AS binding
+                  ON binding.external_identity_id = identity.id
+                 AND binding.data_source_code = :data_source
+                JOIN prospect ON prospect.id = binding.opportunity_id
+                JOIN establishment ON establishment.id = prospect.establishment_id
+                 AND establishment.siret = input.siret
+                 AND left(establishment.siret, 9) = input.siren
+                JOIN location_assertion AS location
+                  ON location.opportunity_id = prospect.id
+                 AND location.layer = 'SOURCE'
+                 AND location.is_current
+                JOIN collection_cycle_commune AS commune
+                  ON commune.collection_cycle_id = :cycle_id
+                 AND commune.municipality_code = location.municipality_code
+                LEFT JOIN source_sighting AS sighting
+                  ON sighting.source_binding_id = binding.id
+                 AND sighting.collection_cycle_id = :cycle_id
+                LEFT JOIN sirene_known_status_check AS checked
+                  ON checked.source_binding_id = binding.id
+                 AND checked.collection_cycle_id = :cycle_id
+                WHERE sighting.source_binding_id IS NULL
+                  AND checked.id IS NULL
+                """
+            ),
+            parameters,
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TEMPORARY TABLE sirene_restricted_organizations
+                ON COMMIT DROP AS
+                SELECT DISTINCT organization_id
+                FROM sirene_restricted_input
+                WHERE legal_unit_restricted
+                  AND organization_id IS NOT NULL
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TEMPORARY TABLE sirene_restricted_establishments
+                ON COMMIT DROP AS
+                SELECT DISTINCT establishment_id
+                FROM sirene_restricted_input
+                UNION
+                SELECT establishment.id
+                FROM establishment
+                JOIN sirene_restricted_organizations AS restricted
+                  ON restricted.organization_id = establishment.organization_id
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TEMPORARY TABLE sirene_restricted_opportunities
+                ON COMMIT DROP AS
+                SELECT prospect.id AS opportunity_id
+                FROM prospect
+                JOIN sirene_restricted_establishments AS restricted
+                  ON restricted.establishment_id = prospect.establishment_id
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TEMPORARY TABLE sirene_restricted_bindings
+                ON COMMIT DROP AS
+                SELECT binding.id AS source_binding_id
+                FROM source_binding AS binding
+                JOIN sirene_restricted_opportunities AS restricted
+                  ON restricted.opportunity_id = binding.opportunity_id
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TEMPORARY TABLE sirene_restricted_identities
+                ON COMMIT DROP AS
+                SELECT DISTINCT identity.id AS external_identity_id
+                FROM external_identity AS identity
+                WHERE identity.id IN (
+                    SELECT external_identity_id FROM sirene_restricted_input
+                )
+                   OR identity.organization_id IN (
+                    SELECT organization_id FROM sirene_restricted_organizations
+                )
+                   OR identity.establishment_id IN (
+                    SELECT establishment_id FROM sirene_restricted_establishments
+                )
+                   OR identity.opportunity_id IN (
+                    SELECT opportunity_id FROM sirene_restricted_opportunities
+                )
+                   OR identity.id IN (
+                    SELECT binding.external_identity_id
+                    FROM source_binding AS binding
+                    JOIN sirene_restricted_bindings AS restricted
+                      ON restricted.source_binding_id = binding.id
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TEMPORARY TABLE sirene_restricted_items
+                ON COMMIT DROP AS
+                SELECT DISTINCT item.id AS collection_item_id
+                FROM collection_item AS item
+                WHERE item.external_identity_id IN (
+                    SELECT external_identity_id FROM sirene_restricted_identities
+                )
+                   OR item.opportunity_id IN (
+                    SELECT opportunity_id FROM sirene_restricted_opportunities
+                )
+                   OR (
+                    item.authority = 'INSEE'
+                    AND item.namespace = 'SIRET'
+                    AND item.identifier_value IN (
+                        SELECT establishment.siret
+                        FROM establishment
+                        JOIN sirene_restricted_establishments AS restricted
+                          ON restricted.establishment_id = establishment.id
+                    )
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TEMPORARY TABLE sirene_restricted_observations
+                ON COMMIT DROP AS
+                SELECT DISTINCT observation_id AS source_observation_id
+                FROM (
+                    SELECT observation.id AS observation_id
+                    FROM source_observation AS observation
+                    WHERE observation.external_identity_id IN (
+                        SELECT external_identity_id FROM sirene_restricted_identities
+                    )
+                       OR observation.source_binding_id IN (
+                        SELECT source_binding_id FROM sirene_restricted_bindings
+                    )
+                    UNION ALL
+                    SELECT organization.current_observation_id
+                    FROM organization
+                    WHERE organization.id IN (
+                        SELECT organization_id FROM sirene_restricted_organizations
+                    )
+                    UNION ALL
+                    SELECT organization.administrative_state_observation_id
+                    FROM organization
+                    WHERE organization.id IN (
+                        SELECT organization_id FROM sirene_restricted_organizations
+                    )
+                    UNION ALL
+                    SELECT organization.diffusion_status_observation_id
+                    FROM organization
+                    WHERE organization.id IN (
+                        SELECT organization_id FROM sirene_restricted_organizations
+                    )
+                    UNION ALL
+                    SELECT establishment.current_observation_id
+                    FROM establishment
+                    WHERE establishment.id IN (
+                        SELECT establishment_id FROM sirene_restricted_establishments
+                    )
+                    UNION ALL
+                    SELECT establishment.administrative_state_observation_id
+                    FROM establishment
+                    WHERE establishment.id IN (
+                        SELECT establishment_id FROM sirene_restricted_establishments
+                    )
+                    UNION ALL
+                    SELECT establishment.diffusion_status_observation_id
+                    FROM establishment
+                    WHERE establishment.id IN (
+                        SELECT establishment_id FROM sirene_restricted_establishments
+                    )
+                    UNION ALL
+                    SELECT binding.current_observation_id
+                    FROM source_binding AS binding
+                    WHERE binding.id IN (
+                        SELECT source_binding_id FROM sirene_restricted_bindings
+                    )
+                    UNION ALL
+                    SELECT item.source_observation_id
+                    FROM collection_item AS item
+                    WHERE item.id IN (
+                        SELECT collection_item_id FROM sirene_restricted_items
+                    )
+                    UNION ALL
+                    SELECT position.source_observation_id
+                    FROM candidate_position AS position
+                    WHERE position.collection_item_id IN (
+                        SELECT collection_item_id FROM sirene_restricted_items
+                    )
+                    UNION ALL
+                    SELECT location.address_observation_id
+                    FROM location_assertion AS location
+                    WHERE location.opportunity_id IN (
+                        SELECT opportunity_id FROM sirene_restricted_opportunities
+                    )
+                    UNION ALL
+                    SELECT location.position_observation_id
+                    FROM location_assertion AS location
+                    WHERE location.opportunity_id IN (
+                        SELECT opportunity_id FROM sirene_restricted_opportunities
+                    )
+                    UNION ALL
+                    SELECT contact.source_observation_id
+                    FROM contact_set AS contact
+                    WHERE contact.opportunity_id IN (
+                        SELECT opportunity_id FROM sirene_restricted_opportunities
+                    )
+                    UNION ALL
+                    SELECT lineage.source_observation_id
+                    FROM field_lineage AS lineage
+                    WHERE lineage.opportunity_id IN (
+                        SELECT opportunity_id FROM sirene_restricted_opportunities
+                    )
+                ) AS referenced
+                WHERE observation_id IS NOT NULL
+                """
+            )
+        )
+
+    @staticmethod
+    def _purge_restricted_targets(
+        connection: Connection,
+        parameters: dict[str, object],
+    ) -> None:
+        if parameters["restricted_count"] == 0:
+            return
+        connection.execute(
+            text(
+                """
+                UPDATE source_observation
+                SET source_binding_id = NULL
+                WHERE source_binding_id IN (
+                    SELECT source_binding_id FROM sirene_restricted_bindings
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM candidate_position
+                WHERE collection_item_id IN (
+                    SELECT collection_item_id FROM sirene_restricted_items
+                )
+                   OR source_observation_id IN (
+                    SELECT source_observation_id FROM sirene_restricted_observations
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE collection_item
+                SET
+                    identifier_value = NULL,
+                    identifier_fingerprint = NULL,
+                    external_identity_id = NULL,
+                    source_observation_id = NULL,
+                    opportunity_id = NULL,
+                    geographic_classification = 'NOT_APPLICABLE',
+                    distance_meters = NULL,
+                    decision = 'REJECTED',
+                    reason = '{"code":"SOURCE_PARTIAL_DIFFUSION_PURGED"}'::jsonb,
+                    updated_at = :now
+                WHERE id IN (
+                    SELECT collection_item_id FROM sirene_restricted_items
+                )
+                """
+            ),
+            parameters,
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE opportunity
+                SET duplicate_of_opportunity_id = NULL, updated_at = :now
+                WHERE duplicate_of_opportunity_id IN (
+                    SELECT opportunity_id FROM sirene_restricted_opportunities
+                )
+                """
+            ),
+            parameters,
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE external_identity
+                SET organization_id = NULL, establishment_id = NULL, opportunity_id = NULL
+                WHERE id IN (
+                    SELECT external_identity_id FROM sirene_restricted_identities
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM opportunity
+                WHERE id IN (
+                    SELECT opportunity_id FROM sirene_restricted_opportunities
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE organization
+                SET
+                    current_observation_id = CASE
+                        WHEN current_observation_id IN (
+                            SELECT source_observation_id
+                            FROM sirene_restricted_observations
+                        ) THEN NULL ELSE current_observation_id END,
+                    administrative_state_observation_id = CASE
+                        WHEN administrative_state_observation_id IN (
+                            SELECT source_observation_id
+                            FROM sirene_restricted_observations
+                        ) THEN NULL ELSE administrative_state_observation_id END,
+                    diffusion_status_observation_id = CASE
+                        WHEN diffusion_status_observation_id IN (
+                            SELECT source_observation_id
+                            FROM sirene_restricted_observations
+                        ) THEN NULL ELSE diffusion_status_observation_id END
+                WHERE current_observation_id IN (
+                        SELECT source_observation_id FROM sirene_restricted_observations
+                    )
+                   OR administrative_state_observation_id IN (
+                        SELECT source_observation_id FROM sirene_restricted_observations
+                    )
+                   OR diffusion_status_observation_id IN (
+                        SELECT source_observation_id FROM sirene_restricted_observations
+                    )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                UPDATE establishment
+                SET
+                    current_observation_id = CASE
+                        WHEN current_observation_id IN (
+                            SELECT source_observation_id
+                            FROM sirene_restricted_observations
+                        ) THEN NULL ELSE current_observation_id END,
+                    administrative_state_observation_id = CASE
+                        WHEN administrative_state_observation_id IN (
+                            SELECT source_observation_id
+                            FROM sirene_restricted_observations
+                        ) THEN NULL ELSE administrative_state_observation_id END,
+                    diffusion_status_observation_id = CASE
+                        WHEN diffusion_status_observation_id IN (
+                            SELECT source_observation_id
+                            FROM sirene_restricted_observations
+                        ) THEN NULL ELSE diffusion_status_observation_id END
+                WHERE current_observation_id IN (
+                        SELECT source_observation_id FROM sirene_restricted_observations
+                    )
+                   OR administrative_state_observation_id IN (
+                        SELECT source_observation_id FROM sirene_restricted_observations
+                    )
+                   OR diffusion_status_observation_id IN (
+                        SELECT source_observation_id FROM sirene_restricted_observations
+                    )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM establishment
+                WHERE id IN (
+                    SELECT establishment_id FROM sirene_restricted_establishments
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM organization AS organization
+                WHERE (
+                    organization.id IN (
+                        SELECT organization_id FROM sirene_restricted_organizations
+                    )
+                    OR organization.id IN (
+                        SELECT input.organization_id FROM sirene_restricted_input AS input
+                    )
+                )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM establishment
+                    WHERE establishment.organization_id = organization.id
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM source_observation
+                WHERE id IN (
+                    SELECT source_observation_id FROM sirene_restricted_observations
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                DELETE FROM external_identity
+                WHERE id IN (
+                    SELECT external_identity_id FROM sirene_restricted_identities
+                )
+                """
+            )
         )
 
     @staticmethod
@@ -894,6 +1381,17 @@ class SqlAlchemySireneKnownStatusRepository:
                 UPDATE collection_source_run
                 SET
                     request_count = request_count + 1,
+                    counters = jsonb_set(
+                        counters,
+                        '{restricted_count}',
+                        to_jsonb(
+                            COALESCE(
+                                CAST(counters ->> 'restricted_count' AS integer),
+                                0
+                            ) + CAST(:restricted_count AS integer)
+                        ),
+                        TRUE
+                    ),
                     metadata = metadata - 'last_error_code',
                     updated_at = :now
                 WHERE collection_cycle_id = :cycle_id
@@ -919,16 +1417,27 @@ class SqlAlchemySireneKnownStatusRepository:
                 text(
                     """
                     SELECT
-                        count(*) AS checked_count,
+                        count(checked.id) + COALESCE(
+                            CAST(source.counters ->> 'restricted_count' AS integer),
+                            0
+                        ) AS checked_count,
                         count(*) FILTER (WHERE outcome = 'ACTIVE') AS active_count,
                         count(*) FILTER (WHERE outcome = 'CLOSED') AS closed_count,
                         count(*) FILTER (WHERE outcome = 'CEASED') AS ceased_count,
+                        COALESCE(
+                            CAST(source.counters ->> 'restricted_count' AS integer),
+                            0
+                        ) AS restricted_count,
                         count(*) FILTER (WHERE outcome = 'NOT_FOUND') AS not_found_count
-                    FROM sirene_known_status_check
-                    WHERE collection_cycle_id = :cycle_id
+                    FROM collection_source_run AS source
+                    LEFT JOIN sirene_known_status_check AS checked
+                      ON checked.collection_cycle_id = source.collection_cycle_id
+                    WHERE source.collection_cycle_id = :cycle_id
+                      AND source.source = :source
+                    GROUP BY source.counters
                     """
                 ),
-                {"cycle_id": reservation.cycle_id},
+                {"cycle_id": reservation.cycle_id, "source": _SOURCE},
             )
             .mappings()
             .one()
@@ -938,6 +1447,7 @@ class SqlAlchemySireneKnownStatusRepository:
             row["active_count"],
             row["closed_count"],
             row["ceased_count"],
+            row["restricted_count"],
             row["not_found_count"],
         )
         if any(not isinstance(value, int) for value in values):

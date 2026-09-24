@@ -736,20 +736,21 @@ Pour chaque cycle Sirene, Radar :
 
 Si un établissement ou son unité légale passe en diffusion partielle (`P`),
 cela ne signifie ni que l'établissement est fermé ni que l'unité légale est
-cessée. La fiche devient immédiatement « non prospectable — diffusion
-restreinte » et sort des listes, recherches, filtres et scores d'opportunités
-ordinaires. Les données externes qui ne sont plus réutilisables pour la
-prospection ne sont plus affichées ni utilisées. Radar conserve uniquement les
-éléments dont la conservation reste autorisée et qui sont nécessaires pour
-reconnaître la restriction et éviter une réimportation incorrecte. Les
-corrections et notes utilisateur ne servent jamais à contourner cette
-restriction ; elles ne sont conservées que si leur conservation possède un
-fondement indépendant et licite. La solution technique prudente consiste à
-purger les données de prospection et à ne conserver dans une liste repoussoir
-dédiée qu'une HMAC du SIRET ou du SIREN, calculée avec une clé hors base. Sa
-base légale, sa portée et sa durée doivent être validées avant le début du
-jalon 6 ; aucun connecteur Sirene ne peut être mis en production sans cette
-décision.
+cessée. Radar purge immédiatement et atomiquement la fiche de prospection, ses
+identités, observations, liens, contacts, notes et corrections. Si la
+restriction porte sur l'unité légale, toutes les fiches connues de ses
+établissements sont purgées. Seuls la date du cycle et des compteurs agrégés
+non identifiants restent disponibles pour l'exploitation ; la réponse `P`
+elle-même n'est pas persistée.
+
+Le MVP ne conserve ni SIRET, ni SIREN, ni empreinte ou HMAC dans une liste
+repoussoir pour ce cas. Les collectes ordinaires exigent que l'établissement
+et son unité légale soient tous deux en diffusion totale (`O`) : l'objet ne
+peut donc pas réapparaître tant que la restriction est publiée. Si Sirene le
+republie ultérieurement en diffusion totale, Radar peut créer une nouvelle
+fiche sans la relier à l'ancienne fiche purgée. Les données utilisateur ne
+servent jamais à contourner l'opposition à la prospection. Cette politique
+produit constitue un choix conservateur pour le MVP et non un avis juridique.
 
 La validation manuelle initiale des contrats a utilisé un cercle réel de 50 km
 centré sur l'adresse géocodée de la mairie de Dax, ainsi qu'un ensemble varié
@@ -1018,8 +1019,8 @@ Les mécanismes techniques précis relèvent de `docs/architecture.md`.
   partielle interrompt l'utilisation des données externes désormais protégées
   sans être interprété comme une fermeture.
 - Une restriction de diffusion prévaut sur la conservation ordinaire des
-  observations et sur les corrections utilisateur ; aucune donnée locale ne
-  sert à contourner une opposition à la prospection.
+  observations et sur les corrections utilisateur : la fiche et ses données
+  identifiantes sont purgées, tandis que seul un compteur agrégé subsiste.
 - La provenance des coordonnées de contact est conservée.
 - Les licences et conditions d'utilisation de chaque fournisseur doivent être
   validées avant son intégration.
@@ -1126,9 +1127,9 @@ Le MVP est acceptable lorsque :
     pour la prospection est autorisée, n'est jamais perdu en raison d'une
     position absente : il reste consultable dans « Localisation à vérifier » ;
     si l'établissement ou son unité légale passe en diffusion partielle, la
-    fiche devient non prospectable sans être déclarée fermée, sort des listes
-    et scores ordinaires, et aucune donnée restreinte n'est affichée ni utilisée
-    pour la prospection.
+    fiche n'est pas déclarée fermée mais est purgée avec ses données
+    identifiantes ; aucune donnée restreinte n'est affichée, conservée ou
+    utilisée pour la prospection et seul un compteur agrégé subsiste.
 
 ## 14. Critères de succès produit
 
@@ -1204,9 +1205,6 @@ des événements sont arrêtés pour le MVP dans
 le périmètre du MVP, mais doivent être clos avant l'implémentation ou la mise
 en production concernée :
 
-- faire valider avant l'activation du connecteur Sirene la portée, la purge, la base légale
-  et la durée éventuelle de la liste repoussoir HMAC appliquée lorsqu'un
-  établissement ou son unité légale passe en diffusion partielle ;
 - qualifier manuellement l'échantillon de Dax et ajuster les pondérations et
   mappings initiaux des scores ;
 - arrêter le frontend avant le jalon qui introduit l'interface de connexion ;

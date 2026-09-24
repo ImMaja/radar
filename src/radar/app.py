@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from radar.auth.contracts import AuthenticationBackend
 from radar.auth.rate_limit import LoginRateLimiter
 from radar.auth.service import AuthService
-from radar.collections.contracts import CollectionBackend
+from radar.collections.contracts import CollectionBackend, Connector
 from radar.collections.service import CollectionService, UnavailableCollectionBackend
 from radar.config import Settings, get_settings
 from radar.geography.contracts import GeographyBackend
@@ -70,8 +70,14 @@ def create_app(
             owned_geocoder,
         )
     if collection_backend is None:
+        enabled_connectors: frozenset[Connector] = (
+            frozenset(("SIRENE",)) if resolved_settings.sirene_connector_configured else frozenset()
+        )
         collection_backend = (
-            CollectionService(SqlAlchemyCollectionRepository(owned_database.engine))
+            CollectionService(
+                SqlAlchemyCollectionRepository(owned_database.engine),
+                enabled_connectors=enabled_connectors,
+            )
             if owned_database is not None
             else UnavailableCollectionBackend()
         )

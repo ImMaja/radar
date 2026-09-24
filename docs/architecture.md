@@ -654,19 +654,23 @@ en erreur d'existence.
 ### 9.2 Traitement du fichier géographique
 
 Le fichier mensuel officiel reste dans le MVP comme source indépendante de
-qualité géographique et source de repli. Le worker :
+qualité géographique et source de repli. Pour la première mise en service,
+l'opérateur télécharge le fichier sur un volume privé et configure son chemin,
+son identifiant de ressource, son URL et sa date de récupération. Le connecteur
+reste désactivé si l'un de ces éléments manque ou si le fichier n'est pas
+lisible. Le worker :
 
-- télécharge la ressource vers un nom temporaire sur un volume privé ;
-- vérifie l'espace libre avant le téléchargement ;
 - contrôle la taille, l'empreinte disponible, le format et les colonnes ;
-- ne rend la version utilisable qu'au moyen d'un renommage ou d'une
-  publication atomique après validation ;
+- ne rend la version utilisable dans PostgreSQL qu'après validation et
+  réconciliation complètes ;
 - lit le fichier en flux ou par fragments et ne conserve dans PostgreSQL que
   les positions nécessaires et leur provenance ;
-- garde au plus la version courante et la précédente validée pour faciliter un
-  retour arrière ;
-- peut retélécharger ce fichier externe : il n'est pas une sauvegarde des
-  données utilisateur.
+- ne traite jamais ce fichier externe comme une sauvegarde des données
+  utilisateur.
+
+La découverte, le téléchargement temporaire, la vérification d'espace libre et
+la rotation automatique des millésimes restent une automatisation ultérieure.
+Ils ne modifient ni le contrat d'import ni la provenance obligatoire.
 
 Le prototype borné du jalon 6 retient DuckDB comme lecteur Parquet embarqué.
 L'adaptateur contrôle la taille et l'empreinte, vérifie les neuf colonnes utiles
@@ -770,11 +774,12 @@ diagnostic d'absence et ne change aucun état administratif. Les résultats
 trouvés créent aussi une `source_sighting`, tandis que la réexécution ignore les
 contrôles déjà validés.
 
-Si l'établissement ou son unité légale est en diffusion partielle, le lot est
-refusé avant toute persistance de son identifiant et la source ciblée passe en
-échec explicite. Ce comportement fermé évite une conservation non autorisée,
-mais ne remplace pas la future procédure de purge : le connecteur de production
-reste désactivé tant que cette politique n'est pas validée et implémentée.
+Si l'établissement est en diffusion partielle, la même transaction purge sa
+fiche, ses données utilisateur, ses identités, observations, liens et
+occurrences identifiantes. Si la restriction porte sur l'unité légale, la
+transaction étend la purge à tous ses établissements connus. La réponse `P`
+n'est pas persistée ; `restricted_count` est incrémenté dans la source ciblée
+et permet une reprise idempotente sans conserver d'identifiant.
 
 La lecture locale expose maintenant `GET /api/v1/prospects` et
 `GET /api/v1/prospects/{id}` derrière la session privée. La liste applique par
@@ -910,13 +915,12 @@ réutilisation avant de construire une opportunité. Une transition Sirene vers
 la diffusion partielle déclenche un traitement explicite de conformité, qui
 prévaut sur la conservation ordinaire et sur les corrections utilisateur.
 
-La solution technique prudente prévue consiste à purger la fiche de
-prospection et à conserver seulement une HMAC du SIRET ou du SIREN dans une
-liste repoussoir dédiée, avec clé hors base. Sa base légale, sa portée et sa
-durée restent un préalable juridique signalé dans `docs/data-sources.md` qui
-doit être fermé avant l'activation du connecteur. Tant que cette politique n'est pas
-validée, le connecteur Sirene ne doit pas être mis en production. Aucun
-adaptateur ne peut contourner cette vérification.
+La solution technique du MVP purge intégralement la fiche et ne conserve ni
+SIRET, ni SIREN, ni empreinte ou HMAC. Seuls des compteurs agrégés non
+identifiants subsistent. Comme l'énumération ordinaire exige les deux statuts
+de diffusion `O`, elle ne peut recréer la fiche pendant la restriction. Un
+retour ultérieur à `O` produit une nouvelle fiche sans relation avec celle qui
+a été purgée. Aucun adaptateur ne peut contourner cette vérification.
 
 ## 12. Déduplication et idempotence
 
@@ -1273,14 +1277,11 @@ seuls une extraction en microservices.
 Les points suivants ne bloquent pas la rédaction des autres documents, mais
 doivent être résolus avant leur lot d'implémentation :
 
-1. avant l'activation du connecteur Sirene, règles exactes de purge et de
-   conservation d'une HMAC lors d'un passage Sirene en diffusion partielle,
-   après validation de conformité ;
-2. mécanisme d'exploitation choisi sur le serveur réel, `systemd` ou
+1. mécanisme d'exploitation choisi sur le serveur réel, `systemd` ou
    composition de conteneurs simple ;
-3. paramètres Argon2id et durées définitives de session après mesure sur le
+2. paramètres Argon2id et durées définitives de session après mesure sur le
    matériel et validation de l'ergonomie ;
-4. paramètres du pool SQLAlchemy et limites de ressources après la première
+3. paramètres du pool SQLAlchemy et limites de ressources après la première
    collecte implémentée.
 
 Ces décisions doivent être consignées avant le code correspondant. Elles ne

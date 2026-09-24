@@ -9,7 +9,6 @@ import pytest
 
 from radar.collections.contracts import (
     CollectionProgress,
-    PermanentCollectionError,
     ReservedCollection,
     RetryableCollectionError,
 )
@@ -95,7 +94,12 @@ class FixtureBackend:
         checked = self.plan.completed_count + sum(
             len(lookup.requested_sirets) for lookup in self.lookups
         )
-        return SireneKnownStatusSummary(checked, checked, 0, 0, 0)
+        restricted = sum(
+            status.has_partial_diffusion for lookup in self.lookups for status in lookup.statuses
+        )
+        not_found = sum(len(lookup.missing_sirets) for lookup in self.lookups)
+        active = checked - restricted - not_found
+        return SireneKnownStatusSummary(checked, active, 0, 0, restricted, not_found)
 
 
 class FixtureReader:
@@ -149,7 +153,7 @@ def test_reconciles_in_bounded_batches_and_reports_durable_progress() -> None:
     assert backend.finish_calls == 1
 
 
-def test_partial_diffusion_fails_closed_before_persisting_the_target() -> None:
+def test_partial_diffusion_is_delegated_to_the_transactional_purge() -> None:
     siret = "12345678901234"
     backend = FixtureBackend(SireneKnownStatusPlan("2026-09-23", 1, 0, (siret,)))
     service = SireneKnownStatusReconciliationService(
@@ -158,13 +162,12 @@ def test_partial_diffusion_fails_closed_before_persisting_the_target() -> None:
         clock=lambda: NOW,
     )
 
-    with pytest.raises(PermanentCollectionError) as captured:
-        service.reconcile(reservation(), FixtureReporter())
+    summary = service.reconcile(reservation(), FixtureReporter())
 
-    assert captured.value.error.code == "sirene_partial_diffusion_policy_required"
-    assert backend.lookups == []
-    assert backend.failures == [("sirene_partial_diffusion_policy_required", False)]
-    assert backend.finish_calls == 0
+    assert summary == SireneKnownStatusSummary(1, 0, 0, 0, 1, 0)
+    assert len(backend.lookups) == 1
+    assert backend.failures == []
+    assert backend.finish_calls == 1
 
 
 def test_temporary_provider_failure_remains_retryable() -> None:

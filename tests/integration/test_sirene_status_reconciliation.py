@@ -42,8 +42,41 @@ class FixtureStatusReader:
             SireneEstablishmentStatus(
                 requested[2], requested[2][:9], "ACTIVE", "CEASED", "FULL", "FULL"
             ),
+            SireneEstablishmentStatus(
+                requested[3],
+                requested[3][:9],
+                "ACTIVE",
+                "ACTIVE",
+                "PARTIAL",
+                "FULL",
+            ),
         )
-        return SireneStatusLookup(requested, statuses, (requested[3],))
+        return SireneStatusLookup(requested, statuses, (requested[4],))
+
+
+class LegalUnitRestrictedReader:
+    def lookup_establishment_statuses(
+        self,
+        sirets: Sequence[str],
+        at_date: str,
+    ) -> SireneStatusLookup:
+        del at_date
+        requested = tuple(sirets)
+        return SireneStatusLookup(
+            requested,
+            tuple(
+                SireneEstablishmentStatus(
+                    siret,
+                    siret[:9],
+                    "ACTIVE",
+                    "ACTIVE",
+                    "FULL",
+                    "PARTIAL",
+                )
+                for siret in requested
+            ),
+            (),
+        )
 
 
 class FixtureReporter:
@@ -284,10 +317,13 @@ def _seed_prospect(
     municipality_code: str,
     *,
     hidden: bool = False,
+    organization_id: UUID | None = None,
 ) -> tuple[UUID, UUID]:
     identity_id = uuid4()
     observation_id = uuid4()
-    organization_id = uuid4()
+    create_organization = organization_id is None
+    if organization_id is None:
+        organization_id = uuid4()
     establishment_id = uuid4()
     opportunity_id = uuid4()
     binding_id = uuid4()
@@ -336,29 +372,30 @@ def _seed_prospect(
             "fingerprint": hashlib.sha256(f"prior:{siret}".encode()).hexdigest(),
         },
     )
-    connection.execute(
-        text(
-            """
-            INSERT INTO organization (
-                id, siren, legal_name, usual_name, organization_type, legal_category,
-                administrative_state, diffusion_status, current_observation_id,
-                administrative_state_observation_id, diffusion_status_observation_id,
-                first_observed_at, last_observed_at, created_at, updated_at
-            ) VALUES (
-                :id, :siren, :name, NULL, 'UNKNOWN', '5710', 'CEASED', 'FULL',
-                :observation_id, :observation_id, :observation_id,
-                :observed_at, :observed_at, :observed_at, :observed_at
-            )
-            """
-        ),
-        {
-            "id": organization_id,
-            "siren": siret[:9],
-            "name": f"Organisation {siret}",
-            "observation_id": observation_id,
-            "observed_at": NOW - timedelta(days=30),
-        },
-    )
+    if create_organization:
+        connection.execute(
+            text(
+                """
+                INSERT INTO organization (
+                    id, siren, legal_name, usual_name, organization_type, legal_category,
+                    administrative_state, diffusion_status, current_observation_id,
+                    administrative_state_observation_id, diffusion_status_observation_id,
+                    first_observed_at, last_observed_at, created_at, updated_at
+                ) VALUES (
+                    :id, :siren, :name, NULL, 'UNKNOWN', '5710', 'CEASED', 'FULL',
+                    :observation_id, :observation_id, :observation_id,
+                    :observed_at, :observed_at, :observed_at, :observed_at
+                )
+                """
+            ),
+            {
+                "id": organization_id,
+                "siren": siret[:9],
+                "name": f"Organisation {siret}",
+                "observation_id": observation_id,
+                "observed_at": NOW - timedelta(days=30),
+            },
+        )
     connection.execute(
         text(
             """
@@ -513,9 +550,14 @@ def test_checks_only_known_absences_and_applies_explicit_states_idempotently(
             )
             _seed_prospect(connection, "22222222222222", "40088")
             _seed_prospect(connection, "33333333333333", "40088")
-            _, missing_binding = _seed_prospect(connection, "44444444444444", "40088")
+            restricted_opportunity, _ = _seed_prospect(
+                connection,
+                "44444444444444",
+                "40088",
+            )
             _, seen_binding = _seed_prospect(connection, "55555555555555", "40088")
             _seed_prospect(connection, "66666666666666", "40100")
+            _, missing_binding = _seed_prospect(connection, "77777777777777", "40088")
             current_observation = connection.execute(
                 text("SELECT current_observation_id FROM source_binding WHERE id = :binding_id"),
                 {"binding_id": seen_binding},
@@ -535,32 +577,44 @@ def test_checks_only_known_absences_and_applies_explicit_states_idempotently(
                     "now": NOW,
                 },
             )
-            contact_set_id = uuid4()
-            connection.execute(
-                text(
-                    """
-                    INSERT INTO contact_set (
-                        id, opportunity_id, layer, source_observation_id,
-                        is_current, created_at, retired_at
-                    ) VALUES (:id, :opportunity_id, 'USER', NULL, TRUE, :now, NULL)
-                    """
-                ),
-                {"id": contact_set_id, "opportunity_id": active_opportunity, "now": NOW},
-            )
-            connection.execute(
-                text(
-                    """
-                    INSERT INTO contact_point (
-                        id, contact_set_id, type, display_value, normalized_value,
-                        scope, label, source_reference, display_order, created_at
-                    ) VALUES (
-                        gen_random_uuid(), :set_id, 'EMAIL', 'contact@example.test',
-                        'contact@example.test', 'LOCAL', NULL, NULL, 0, :now
-                    )
-                    """
-                ),
-                {"set_id": contact_set_id, "now": NOW},
-            )
+            for index, opportunity_id in enumerate(
+                (active_opportunity, restricted_opportunity),
+                start=1,
+            ):
+                contact_set_id = uuid4()
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO contact_set (
+                            id, opportunity_id, layer, source_observation_id,
+                            is_current, created_at, retired_at
+                        ) VALUES (:id, :opportunity_id, 'USER', NULL, TRUE, :now, NULL)
+                        """
+                    ),
+                    {
+                        "id": contact_set_id,
+                        "opportunity_id": opportunity_id,
+                        "now": NOW,
+                    },
+                )
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO contact_point (
+                            id, contact_set_id, type, display_value, normalized_value,
+                            scope, label, source_reference, display_order, created_at
+                        ) VALUES (
+                            gen_random_uuid(), :set_id, 'EMAIL', :email,
+                            :email, 'LOCAL', NULL, NULL, 0, :now
+                        )
+                        """
+                    ),
+                    {
+                        "set_id": contact_set_id,
+                        "email": f"contact-{index}@example.test",
+                        "now": NOW,
+                    },
+                )
 
         service = SireneKnownStatusReconciliationService(
             SqlAlchemySireneKnownStatusRepository(engine),
@@ -570,10 +624,11 @@ def test_checks_only_known_absences_and_applies_explicit_states_idempotently(
         summary = service.reconcile(reservation, reporter)
         repeated = service.reconcile(reservation, reporter)
 
-        assert summary.checked_count == 4
+        assert summary.checked_count == 5
         assert summary.active_count == 1
         assert summary.closed_count == 1
         assert summary.ceased_count == 1
+        assert summary.restricted_count == 1
         assert summary.not_found_count == 1
         assert repeated == summary
         assert reader.calls == [
@@ -583,6 +638,7 @@ def test_checks_only_known_absences_and_applies_explicit_states_idempotently(
                     "22222222222222",
                     "33333333333333",
                     "44444444444444",
+                    "77777777777777",
                 ),
                 "2026-09-23",
             )
@@ -667,6 +723,34 @@ def test_checks_only_known_absences_and_applies_explicit_states_idempotently(
                 .mappings()
                 .one()
             )
+            restricted_residue = (
+                connection.execute(
+                    text(
+                        """
+                    SELECT
+                        (SELECT count(*) FROM establishment
+                         WHERE siret = :siret) AS establishments,
+                        (SELECT count(*) FROM organization
+                         WHERE siren = left(:siret, 9)) AS organizations,
+                        (SELECT count(*) FROM external_identity
+                         WHERE canonical_value = :siret
+                            OR identifier_fingerprint = :fingerprint) AS identities,
+                        (SELECT count(*) FROM source_observation
+                         WHERE payload::text LIKE '%' || :siret || '%') AS observations,
+                        (SELECT count(*) FROM prospect
+                         WHERE source_display_name LIKE '%' || :siret || '%') AS prospects,
+                        (SELECT count(*) FROM contact_point
+                         WHERE normalized_value = 'contact-2@example.test') AS contacts
+                    """
+                    ),
+                    {
+                        "siret": "44444444444444",
+                        "fingerprint": hashlib.sha256(b"44444444444444").hexdigest(),
+                    },
+                )
+                .mappings()
+                .one()
+            )
 
         by_siret = {row["siret"]: row for row in states}
         assert by_siret["11111111111111"]["establishment_state"] == "ACTIVE"
@@ -676,20 +760,22 @@ def test_checks_only_known_absences_and_applies_explicit_states_idempotently(
         assert by_siret["22222222222222"]["establishment_state"] == "CLOSED"
         assert by_siret["22222222222222"]["organization_state"] == "ACTIVE"
         assert by_siret["33333333333333"]["organization_state"] == "CEASED"
-        assert by_siret["44444444444444"]["establishment_state"] == "CLOSED"
+        assert "44444444444444" not in by_siret
         assert by_siret["55555555555555"]["establishment_state"] == "CLOSED"
         assert by_siret["66666666666666"]["establishment_state"] == "CLOSED"
+        assert by_siret["77777777777777"]["establishment_state"] == "CLOSED"
         assert [tuple(row) for row in outcomes] == [
             ("11111111111111", "ACTIVE", True),
             ("22222222222222", "CLOSED", True),
             ("33333333333333", "CEASED", True),
-            ("44444444444444", "NOT_FOUND", False),
+            ("77777777777777", "NOT_FOUND", False),
         ]
         assert source["status"] == "SUCCEEDED"
         assert source["request_count"] == 1
         assert source["retry_count"] == 0
         assert source["error_count"] == 0
-        assert source["counters"]["checked_count"] == 4
+        assert source["counters"]["checked_count"] == 5
+        assert source["counters"]["restricted_count"] == 1
         assert missing_binding_state["state"] == "CURRENT"
         assert missing_binding_state["consecutive_absence_count"] == 1
         assert missing_binding_state["last_checked_at"] == NOW
@@ -699,6 +785,86 @@ def test_checks_only_known_absences_and_applies_explicit_states_idempotently(
             "user_sets": 1,
             "contact_points": 1,
             "sightings": 4,
+        }
+        assert dict(restricted_residue) == {
+            "establishments": 0,
+            "organizations": 0,
+            "identities": 0,
+            "observations": 0,
+            "prospects": 0,
+            "contacts": 0,
+        }
+    finally:
+        engine.dispose()
+
+
+def test_legal_unit_restriction_purges_every_known_establishment(
+    integration_database_url: str,
+) -> None:
+    engine = create_engine(integration_database_url)
+    try:
+        with engine.begin() as connection:
+            reservation, cycle_id = _seed_collection(connection)
+            first_siret = "88888888800001"
+            second_siret = "88888888800002"
+            _seed_prospect(connection, first_siret, "40088")
+            organization_id = connection.execute(
+                text("SELECT id FROM organization WHERE siren = :siren"),
+                {"siren": first_siret[:9]},
+            ).scalar_one()
+            _seed_prospect(
+                connection,
+                second_siret,
+                "40088",
+                organization_id=organization_id,
+            )
+
+        service = SireneKnownStatusReconciliationService(
+            SqlAlchemySireneKnownStatusRepository(engine),
+            LegalUnitRestrictedReader(),
+            clock=lambda: NOW,
+        )
+
+        summary = service.reconcile(reservation, FixtureReporter())
+
+        assert summary.checked_count == 2
+        assert summary.restricted_count == 2
+        with engine.connect() as connection:
+            residue = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT
+                            (SELECT count(*) FROM organization
+                             WHERE siren = :siren) AS organizations,
+                            (SELECT count(*) FROM establishment
+                             WHERE left(siret, 9) = :siren) AS establishments,
+                            (SELECT count(*) FROM external_identity
+                             WHERE canonical_value IN (:first_siret, :second_siret))
+                                AS identities,
+                            (SELECT count(*) FROM opportunity) AS opportunities,
+                            (SELECT counters ->> 'restricted_count'
+                             FROM collection_source_run
+                             WHERE collection_cycle_id = :cycle_id
+                               AND source = 'SIRENE_KNOWN_STATUS') AS restricted_count
+                        """
+                    ),
+                    {
+                        "siren": first_siret[:9],
+                        "first_siret": first_siret,
+                        "second_siret": second_siret,
+                        "cycle_id": cycle_id,
+                    },
+                )
+                .mappings()
+                .one()
+            )
+        assert dict(residue) == {
+            "organizations": 0,
+            "establishments": 0,
+            "identities": 0,
+            "opportunities": 0,
+            "restricted_count": "2",
         }
     finally:
         engine.dispose()

@@ -2,7 +2,7 @@
 
 > Statut : jalons 0 à 5 terminés ; jalon 6 en cours
 >
-> Dernière mise à jour : 23 septembre 2026
+> Dernière mise à jour : 24 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -108,9 +108,8 @@ de 10 000 résultats et des lots de 30 codes au maximum, maintenu le fichier
 mensuel comme repli de l'API pour 30 402 positions, parcouru les 12 pages
 DATAtourisme, retenu `(DATAtourisme, UUID)` comme identité source du MVP et
 confirmé qu'une recherche ciblée retrouve un objet en diffusion partielle sans
-le confondre avec une fermeture. La conformité exacte d'une future liste
-repoussoir Sirene reste un préalable au jalon 6, mais ne bloque pas le socle du
-jalon 2.
+le confondre avec une fermeture. La politique de purge correspondante a ensuite
+été close et implémentée au seizième incrément du jalon 6.
 
 ### Jalon 2 — Socle applicatif minimal
 
@@ -427,19 +426,49 @@ cessation, diffusion partielle et résultat introuvable. Une source durable
 idempotents. Seuls les états administratifs explicitement publiés sont
 appliqués ; une réponse introuvable ne ferme rien. Les présences trouvées sont
 rattachées au cycle et une réactivation respecte le masquage ainsi que les
-contacts utilisateur. Une diffusion partielle arrête le traitement avant toute
-persistance de l'identifiant concerné tant que la politique de purge n'est pas
-validée. Les tests PostgreSQL couvrent les quatre résultats applicables, la
+contacts utilisateur. Le premier comportement fermé refusait une diffusion
+partielle avant la validation de la politique de purge. Les tests PostgreSQL
+couvrent les quatre résultats non restreints, la
 sélection des seules communes comparables et une seconde exécution sans nouvel
 appel fournisseur.
 
+Le quinzième incrément valide l'actualisation complète d'une fiche déjà connue
+par un second cycle Sirene réussi. Une nouvelle observation met à jour les
+projections source du nom, de l'organisme, de l'activité, de l'effectif, de la
+localisation et leur filiation, puis rattache une nouvelle présence au même lien
+source. Le SIRET conserve le même organisme physique et la même fiche, sans
+dupliquer les entités. Le scénario PostgreSQL/PostGIS vérifie aussi qu'un
+masquage et un ensemble de contacts `USER` survivent à cette actualisation, que
+la répétition de la projection reste idempotente et que la nouvelle couverture
+n'est publiée qu'après la réussite du cycle.
+
+Le seizième incrément ferme la politique de diffusion partielle après revue
+des sources officielles Insee, Légifrance et CNIL. Une réponse `P` purge dans
+la transaction la fiche concernée, ses données utilisateur, identités,
+observations, liens et occurrences identifiantes ; une restriction de l'unité
+légale étend la purge à tous ses établissements connus. Le MVP ne conserve
+aucune liste repoussoir ou HMAC : seuls le cycle et un compteur agrégé
+subsistent. Les filtres source sur les deux statuts `O` empêchent la
+réimportation tant que la restriction reste publiée. Les tests PostgreSQL
+couvrent la purge d'un établissement, celle de plusieurs sites d'une même unité
+légale, la disparition des données utilisateur et l'idempotence.
+
+Le dix-septième incrément compose toutes les étapes dans l'exécuteur Sirene du
+worker. Le cycle impose l'ordre énumération, fichier mensuel, résolution,
+géocodage de repli, résolution finale, projection puis contrôle des fiches
+connues. Chaque erreur de domaine devient un échec permanent ou une reprise
+temporaire explicite avec le nombre d'observations déjà préservées. Le
+connecteur n'est enregistré dans le worker et proposé par l'interface qu'avec
+une clé API et la provenance complète d'un Parquet mensuel local lisible. Un
+test PostgreSQL/PostGIS exécute cette composition par le vrai worker jusqu'au
+travail `SUCCEEDED`, à la fiche prospect et à la couverture publiée.
+
 Le score, son filtre et son tri restent volontairement au jalon 8 et ne
-bloquent pas la sortie de ce jalon. Reste à couvrir l'actualisation complète
-d'une fiche présente par un nouveau cycle réussi, puis à fermer et implémenter
-la décision de conformité sur la diffusion partielle. Il faudra également
-composer la chaîne complète dans le worker seulement lorsque ces étapes seront
-prêtes. Le connecteur reste donc désactivé dans l'interface et le worker de
-production.
+bloquent pas la sortie de ce jalon. Il reste à préparer le vrai fichier
+mensuel local, renseigner sa provenance puis exécuter une collecte opérationnelle
+contrôlée avant de déclarer le jalon terminé. La découverte et le
+téléchargement automatiques du prochain millésime sont reportés : ils ne sont
+pas nécessaires pour ce premier essai manuel.
 
 ### Jalon 7 — Événements DATAtourisme de bout en bout
 
@@ -580,6 +609,7 @@ Ces choix ne bloquent pas le cadrage actuel :
 | --- | --- | --- |
 | Frontend du MVP | Décidé le 11 septembre 2026 | TypeScript, React et Vite ; build statique sous la même origine, sans Next.js |
 | Processus de tâches longues | Début du jalon 5 | Même code applicatif, file durable en PostgreSQL, sans broker |
+| Diffusion partielle Sirene | Décidé le 24 septembre 2026 | Purge complète atomique, compteurs agrégés seulement, aucune HMAC |
 | Serveur et mode de déploiement | Avant le jalon 11 | Un seul serveur privé, composants non publics sauf le proxy HTTPS |
 | Destination et capacité des sauvegardes | Avant le jalon 11 | Valider la rétention initiale de l'architecture et tester une restauration |
 

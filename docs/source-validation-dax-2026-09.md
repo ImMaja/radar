@@ -6,6 +6,8 @@
 >
 > Contrôle ciblé de la diffusion partielle : 7 septembre 2026
 >
+> Politique de purge arrêtée après revue officielle : 24 septembre 2026
+>
 > Périmètre : cercle de 50 km à vol d'oiseau autour de la mairie de Dax
 
 ## 1. Objet et conclusion
@@ -29,9 +31,9 @@ sont pas ajoutés au dépôt.
 | Sémantique annuelle DATAtourisme | La répétition prouve seulement une stabilité à court terme ; quatre objets couvrent plusieurs années | Respecter le regroupement de la source et ne pas inventer un discriminant annuel | Limite connue, non bloquante |
 
 Le jalon 1 est donc suffisamment clos pour commencer le socle applicatif. La
-politique juridique exacte de conservation d'une empreinte après passage en
-diffusion partielle reste un préalable au connecteur Sirene de production, et
-non au démarrage du jalon 2.
+politique technique de diffusion partielle a depuis été arrêtée : purge
+complète sans conservation d'une empreinte identifiante ou pseudonymisée, avec
+seuls des compteurs agrégés.
 
 ## 2. Périmètre et méthode
 
@@ -352,14 +354,15 @@ lecture.
 
 ## 7. Anomalies et limites
 
-### 7.1 Décision à fermer avant le jalon 6
+### 7.1 Décision close le 24 septembre 2026
 
-- Avant le début du jalon 6, confirmer la base légale, la durée et le contenu
-  minimal d'une liste repoussoir lors d'un passage en diffusion partielle. La
-  solution technique prudente est une HMAC du SIRET ou du SIREN, avec clé hors
-  base, après purge des données de prospection ; cette option reste à valider
-  juridiquement et aucun connecteur Sirene ne peut être mis en production sans
-  cette décision.
+- La revue des informations officielles de l'Insee, de l'article
+  R. 123-232-1 du Code de commerce et des recommandations de la CNIL conduit à
+  ne conserver aucune liste repoussoir pour le traitement source du MVP. Une
+  réponse `P` provoque la purge atomique de la fiche et de toutes ses données
+  identifiantes ; seuls la date du cycle et un compteur agrégé subsistent. Le
+  filtre des collectes normales sur les seuls statuts `O` empêche la
+  réimportation tant que la restriction est publiée.
 
 Il n'existe aucun autre blocage identifié pour commencer le socle applicatif
 du jalon 2.
@@ -422,7 +425,8 @@ fixtures minimales et expurgées.
 - [Modalités de connexion à l'API Sirene](https://static.insee.fr/api-sirene/Insee_API_publique_modalites_connexion.pdf)
 - [Diffusion partielle dans Sirene](https://www.insee.fr/fr/information/6790269?question=sont-informations-diffusees-lesquelles-pouvez-exercer-droit-d-opposition)
 - [Liste repoussoir et opposition à la prospection — CNIL](https://www.cnil.fr/fr/comment-utiliser-une-liste-repoussoir-pour-respecter-lopposition-la-prospection)
-- [Droit d'opposition Sirene — Code de commerce](https://www.legifrance.gouv.fr/codes/article_lc/LEGIARTI000045515238)
+- [Statut de diffusion dans Sirene — Insee](https://www.sirene.fr/static-resources/documentation/Sirene_4-Onglet-Statut_Diffusion.pdf)
+- [Droit d'opposition Sirene — Code de commerce](https://www.legifrance.gouv.fr/codes/article_lc/LEGIARTI000046065401)
 - [Fichier de géolocalisation Sirene](https://www.data.gouv.fr/datasets/geolocalisation-des-etablissements-du-repertoire-sirene-pour-les-etudes-statistiques)
 - [Contours administratifs](https://www.data.gouv.fr/datasets/contours-administratifs)
 - [API de géocodage de la Géoplateforme](https://cartes.gouv.fr/aide/fr/guides-utilisateur/utiliser-les-services-de-la-geoplateforme/geocodage/)

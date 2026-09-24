@@ -1,5 +1,7 @@
 """Tests for typed application settings."""
 
+from pathlib import Path
+
 import pytest
 from pydantic import SecretStr, ValidationError
 
@@ -41,3 +43,30 @@ def test_session_idle_timeout_cannot_exceed_absolute_timeout() -> None:
             session_idle_seconds=601,
             session_absolute_seconds=600,
         )
+
+
+def test_sirene_connector_requires_complete_file_provenance() -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            database_url=SecretStr(DATABASE_URL),
+            sirene_geolocation_resource_identifier="2026-09",
+        )
+
+
+def test_sirene_connector_is_enabled_only_with_a_readable_release(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sirene-geolocation.parquet"
+    path.write_bytes(b"fixture")
+    settings = Settings(
+        _env_file=None,
+        database_url=SecretStr(DATABASE_URL),
+        sirene_api_key=SecretStr("secret"),
+        sirene_geolocation_file=path,
+        sirene_geolocation_resource_identifier="2026-09",
+        sirene_geolocation_resource_url="https://example.data.gouv.fr/file.parquet",
+        sirene_geolocation_retrieved_at="2026-09-24T12:00:00+02:00",
+    )
+
+    assert settings.sirene_connector_configured is True

@@ -1,5 +1,7 @@
 """Typed application configuration."""
 
+import re
+from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -28,7 +30,27 @@ class Settings(BaseSettings):
     session_idle_seconds: int = Field(default=43_200, ge=60, le=604_800)
     session_absolute_seconds: int = Field(default=604_800, ge=300, le=2_592_000)
     sirene_api_key: SecretStr | None = None
+    sirene_geolocation_file: Path | None = None
+    sirene_geolocation_resource_identifier: str | None = None
+    sirene_geolocation_resource_url: str | None = None
+    sirene_geolocation_published_on: date | None = None
+    sirene_geolocation_retrieved_at: datetime | None = None
+    sirene_geolocation_expected_sha1: str | None = None
+    sirene_geolocation_expected_size_bytes: int | None = Field(default=None, ge=1)
+    sirene_geolocation_license_name: str = "Licence Ouverte 2.0"
     datatourisme_api_key: SecretStr | None = None
+
+    @field_validator("sirene_geolocation_expected_sha1")
+    @classmethod
+    def require_sha1_hex(cls, value: str | None) -> str | None:
+        """Accept an optional lowercase or uppercase SHA-1 resource digest."""
+
+        if value is None:
+            return None
+        normalized = value.lower()
+        if re.fullmatch(r"[0-9a-f]{40}", normalized) is None:
+            raise ValueError("Sirene geolocation SHA-1 must contain 40 hexadecimal characters")
+        return normalized
 
     @field_validator("database_url")
     @classmethod
@@ -61,7 +83,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_timeouts(self) -> "Settings":
-        """Reject unsafe production transport and incoherent session lifetimes."""
+        """Reject unsafe transport, timeouts and incomplete source provenance."""
 
         if self.environment == "production" and not self.public_origin.startswith("https://"):
             msg = "production public origin must use https"
@@ -69,7 +91,52 @@ class Settings(BaseSettings):
         if self.session_idle_seconds > self.session_absolute_seconds:
             msg = "session idle timeout cannot exceed the absolute timeout"
             raise ValueError(msg)
+        geolocation_required = (
+            self.sirene_geolocation_file,
+            self.sirene_geolocation_resource_identifier,
+            self.sirene_geolocation_resource_url,
+            self.sirene_geolocation_retrieved_at,
+        )
+        if any(value is not None for value in geolocation_required) and any(
+            value is None for value in geolocation_required
+        ):
+            msg = "Sirene geolocation file provenance must be configured completely"
+            raise ValueError(msg)
+        if self.sirene_geolocation_resource_url is not None:
+            parsed = urlsplit(self.sirene_geolocation_resource_url)
+            if parsed.scheme != "https" or parsed.hostname is None:
+                msg = "Sirene geolocation resource URL must be absolute HTTPS"
+                raise ValueError(msg)
+        if (
+            self.sirene_geolocation_resource_identifier is not None
+            and not self.sirene_geolocation_resource_identifier.strip()
+        ):
+            msg = "Sirene geolocation resource identifier cannot be empty"
+            raise ValueError(msg)
+        if (
+            self.sirene_geolocation_retrieved_at is not None
+            and self.sirene_geolocation_retrieved_at.tzinfo is None
+        ):
+            msg = "Sirene geolocation retrieval time must include a timezone"
+            raise ValueError(msg)
+        if not self.sirene_geolocation_license_name.strip():
+            msg = "Sirene geolocation license name cannot be empty"
+            raise ValueError(msg)
         return self
+
+    @property
+    def sirene_connector_configured(self) -> bool:
+        """Enable Sirene only with its key and a complete readable file release."""
+
+        return (
+            self.sirene_api_key is not None
+            and bool(self.sirene_api_key.get_secret_value())
+            and self.sirene_geolocation_file is not None
+            and self.sirene_geolocation_file.is_file()
+            and self.sirene_geolocation_resource_identifier is not None
+            and self.sirene_geolocation_resource_url is not None
+            and self.sirene_geolocation_retrieved_at is not None
+        )
 
     @property
     def session_cookie_name(self) -> str:

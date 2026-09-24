@@ -416,6 +416,14 @@ Le traitement doit :
 8. ne publier le nouveau millésime comme utilisable qu'après réussite de tous
    les contrôles.
 
+La première version opérationnelle sépare les deux premières étapes du
+pipeline : l'opérateur choisit et télécharge la ressource officielle, puis
+configure le chemin local avec son identifiant, son URL et sa date de
+récupération. Radar refuse d'activer le connecteur si cette provenance est
+incomplète ou si le fichier n'est pas lisible. La découverte et le
+téléchargement automatiques pourront ensuite remplacer cette préparation
+manuelle sans changer les étapes 3 à 8.
+
 Le fichier et l'API Sirene peuvent représenter des dates différentes. Un
 établissement récent absent du fichier n'est donc pas considéré comme
 inexistant.
@@ -541,8 +549,8 @@ Les résultats sont interprétés ainsi :
 - cessation explicite de l'unité légale : prospect administrativement inactif ;
 - établissement et unité légale de nouveau actifs : réactivation, sous réserve
   des règles de diffusion ;
-- diffusion partielle `P` : fiche non prospectable, jamais « fermée » pour ce
-  seul motif ;
+- diffusion partielle `P` : purge de la fiche, jamais interprétée comme une
+  fermeture pour ce seul motif ;
 - absence, erreur, quota ou réponse ambiguë : aucun changement d'état.
 
 Une réponse introuvable conserve une preuve de contrôle et incrémente un
@@ -552,19 +560,21 @@ met à jour uniquement les états administratifs et de diffusion explicitement
 publiés. Elle ne remplace pas l'observation complète utilisée pour les noms,
 l'activité, l'effectif ou l'adresse.
 
-Un passage en diffusion partielle déclenche le retrait des données qui ne sont
-plus réutilisables pour la prospection. La procédure prudente est une purge de
-la fiche de prospection suivie, si sa conformité est confirmée, de la seule
-empreinte nécessaire pour ne pas la réimporter. Cette documentation ne
-constitue pas un avis juridique.
+Un passage en diffusion partielle déclenche dans la transaction du lot la
+purge de la fiche, de ses données utilisateur, de ses identités, observations,
+liens et occurrences identifiantes. Une restriction de l'unité légale étend la
+purge à tous ses établissements connus. La réponse `P` n'est pas historisée ;
+seuls la date de l'exécution et le nombre agrégé de cibles restreintes restent
+dans la source technique. Cette documentation ne constitue pas un avis
+juridique.
 
 Le statut de diffusion le plus récent doit être réconcilié pour tous les
 SIRET connus : un changement de diffusion ne modifie pas nécessairement
-`dateDernierTraitement`. La solution technique prudente envisagée après un
-passage en `P` est de purger la fiche de prospection puis de conserver dans une
-liste repoussoir dédiée uniquement une HMAC du SIRET ou du SIREN, avec une clé
-hors base. Sa base légale et sa durée restent à valider avant le début du
-jalon 6.
+`dateDernierTraitement`. Le MVP ne conserve aucune liste repoussoir, HMAC ou
+empreinte après la purge. Une collecte normale ne demande que les objets dont
+les deux statuts de diffusion valent `O`, ce qui empêche leur réimportation
+tant que la restriction subsiste. Un retour ultérieur à `O` autorise la
+création d'une nouvelle fiche, sans lien avec les données purgées.
 
 Un contrôle ciblé du 7 septembre 2026 a recherché un établissement publié en
 diffusion partielle, puis l'a redemandé par son SIRET sans conserver cet
@@ -905,15 +915,19 @@ email, téléphone ou rôle trouvé conservera l'URL exacte et la date de lectur
 Les coordonnées privées ou sans rapport professionnel ne seront pas
 collectées.
 
-## 10. Décision à fermer avant l'activation du connecteur
+## 10. Décision de conformité Sirene
 
-Les contrats techniques des deux sources sont suffisamment validés pour
-développer le socle et les adaptateurs indépendants de cette politique. Il reste
-à faire valider avant l'activation du connecteur Sirene le
-traitement minimal et licite d'un passage Sirene en diffusion partielle :
-portée du blocage, purge, finalité et durée éventuelle d'une empreinte HMAC.
-Cette question de conformité ne bloque pas le socle applicatif du jalon 2,
-mais le connecteur Sirene ne peut pas être mis en production sans sa résolution.
+La politique technique du MVP a été arrêtée le 24 septembre 2026 après revue
+des informations officielles de l'Insee, de l'article R. 123-232-1 du Code de
+commerce et des recommandations de la CNIL. Radar applique une purge complète
+sans liste repoussoir identifiante ou pseudonymisée et conserve uniquement des
+compteurs agrégés. L'absence de HMAC évite de créer une conservation nouvelle
+dont Radar n'a pas besoin : le filtre source sur les seuls statuts `O` suffit à
+empêcher une réimportation pendant la restriction.
+
+L'activation réelle reste soumise aux obligations générales applicables au
+traitement et à la prospection de données professionnelles publiques, mais la
+forme de la purge n'est plus une décision technique ouverte du jalon 6.
 
 ## 11. Références officielles
 
@@ -921,7 +935,9 @@ mais le connecteur Sirene ne peut pas être mis en production sans sa résolutio
 - [Accès et téléchargement de Sirene — Insee](https://www.insee.fr/fr/information/3591226)
 - [Actualités Sirene de juin 2026 — Insee](https://www.insee.fr/fr/information/9019311)
 - [Diffusion partielle et droit d'opposition — Insee](https://www.insee.fr/fr/information/6790269?question=sont-informations-diffusees-lesquelles-pouvez-exercer-droit-d-opposition)
+- [Statut de diffusion dans Sirene — Insee](https://www.sirene.fr/static-resources/documentation/Sirene_4-Onglet-Statut_Diffusion.pdf)
 - [Liste repoussoir et opposition à la prospection — CNIL](https://www.cnil.fr/fr/comment-utiliser-une-liste-repoussoir-pour-respecter-lopposition-la-prospection)
+- [Article R. 123-232-1 du Code de commerce — Légifrance](https://www.legifrance.gouv.fr/codes/article_lc/LEGIARTI000046065401)
 - [Modalités de connexion à l'API Sirene](https://static.insee.fr/api-sirene/Insee_API_publique_modalites_connexion.pdf)
 - [Géolocalisation des établissements Sirene](https://www.data.gouv.fr/datasets/geolocalisation-des-etablissements-du-repertoire-sirene-pour-les-etudes-statistiques)
 - [API de géocodage de la Géoplateforme](https://cartes.gouv.fr/aide/fr/guides-utilisateur/utiliser-les-services-de-la-geoplateforme/geocodage/)

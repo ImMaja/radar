@@ -200,8 +200,6 @@ collection_cycle
 
 dataset_release ──< commune_boundary
 collection_cycle réussi ──> connector_coverage
-
-prospecting_suppression (liste repoussoir HMAC indépendante des fiches)
 ```
 
 ## 5. Compte unique et sessions
@@ -809,13 +807,12 @@ Au plus une des trois références de cible est renseignée. La paire
 autorisée, cette empreinte sert surtout de clé technique et la valeur canonique
 reste disponible pour les requêtes métier.
 
-Après une restriction Sirene, l'éventuelle HMAC ne remplace pas l'empreinte de
-cette table : elle est isolée dans `prospecting_suppression` et ne référence
-pas la fiche purgée. Pour un passage en diffusion partielle, la ligne
-`external_identity`, sa valeur canonique et son empreinte technique ordinaire
-sont supprimées après création éventuelle de la HMAC autorisée. La possibilité
-de caviarder une identité sans la supprimer reste réservée à d'autres cas de
-conformité dont la politique l'autorise.
+Pour un passage Sirene en diffusion partielle, la ligne `external_identity`,
+sa valeur canonique et son empreinte technique ordinaire sont supprimées dans
+la même transaction que la fiche. Le MVP ne crée aucune identité de
+substitution, liste repoussoir ou HMAC. La possibilité de caviarder une
+identité sans la supprimer reste réservée à d'autres cas de conformité dont
+une future politique l'autoriserait explicitement.
 
 Les colonnes structurées `siren` et `siret` peuvent dupliquer ces deux
 identifiants sur leur entité pour les contraintes métier et les requêtes. Elles
@@ -838,11 +835,10 @@ Un lien source représente l'objet stable d'une source attaché à une fiche :
 
 La paire source-identité est unique. Elle constitue la première clé de
 reconnaissance d'une nouvelle collecte et reste attachée à une fiche masquée.
-L'état `RESTRICTED` permet une transition de conformité atomique et les cas où
-la conservation du lien reste licite. Pour une diffusion partielle Sirene, le
-lien, ses présences et son identité sont supprimés après inscription éventuelle
-dans la liste repoussoir dédiée. Une obligation de retrait complet prévaut
-toujours sur cette protection technique.
+L'état `RESTRICTED` reste disponible pour d'autres transitions de conformité
+où la conservation temporaire du lien serait licite. Pour une diffusion
+partielle Sirene, le lien, ses présences et son identité sont supprimés sans
+état intermédiaire persistant.
 
 ### 13.4 `source_observation`
 
@@ -888,9 +884,10 @@ sans conserver ailleurs la valeur retirée.
 
 Lors d'un passage Sirene en diffusion partielle, toute observation permettant
 encore d'identifier l'établissement ou de reconstituer ses données de
-prospection est supprimée ou caviardée. Elle ne conserve ni SIRET, ni SIREN, ni
-empreinte ordinaire de ces identifiants. Si aucune partie réellement
-non identifiante ne reste utile, l'observation entière est supprimée.
+prospection est supprimée. Elle ne conserve ni SIRET, ni SIREN, ni empreinte
+ordinaire de ces identifiants. Le caviardage générique reste prévu par le
+modèle pour d'autres traitements de conformité, mais n'est pas utilisé par
+cette procédure Sirene.
 
 ### 13.5 `source_sighting`
 
@@ -924,9 +921,11 @@ dernier état fiable. Un résultat trouvé crée une présence du cycle et met �
 jour uniquement les états explicitement publiés ; le masquage et les ensembles
 utilisateur restent hors de cette écriture.
 
-La table n'accepte aucun résultat de diffusion partielle. Tant que la politique
-de purge n'est pas validée, un tel résultat arrête la source ciblée avant toute
-persistance de son identifiant ou de sa réponse.
+La table n'accepte aucun résultat de diffusion partielle : la fiche, le lien et
+l'identité qu'elle devrait référencer sont purgés. Le nombre de résultats `P`
+traités est conservé uniquement dans `restricted_count`, compteur agrégé de la
+ligne `collection_source_run` correspondante. Le total réconcilié additionne
+ce compteur aux contrôles détaillés restants.
 
 ## 14. Référentiels versionnés
 
@@ -1525,29 +1524,22 @@ commande distincte du masquage. Elle peut :
 - retirer le lien source, ses présences et son identité externe ;
 - supprimer les éléments de collecte, caches, exports et journaux contenant
   encore l'identifiant ou une donnée de prospection concernée, tout en gardant
-  seulement les compteurs agrégés non identifiants ;
-- inscrire éventuellement une empreinte HMAC dans une liste repoussoir dédiée,
-  uniquement si la validation de conformité conclut que sa conservation est
-  licite, nécessaire et suffisamment limitée.
+  seulement les compteurs agrégés non identifiants.
 
-L'opération consigne sa date, son motif normatif, les catégories de données
-traitées et un identifiant de procédure, mais ne recopie pas la donnée retirée
-dans un journal. Elle doit être idempotente.
+Pour Sirene, l'opération est atomique et idempotente. Le cycle, les horodatages
+de sa source technique et `restricted_count` prouvent qu'une purge a eu lieu
+sans recopier l'identifiant retiré dans un journal. Les anciennes occurrences
+de collecte conservent seulement leur rang et un motif générique
+`SOURCE_PARTIAL_DIFFUSION_PURGED` ; leur valeur, leur empreinte et tous leurs
+liens identifiants sont effacés.
 
-Si elle est juridiquement validée, la table logique `prospecting_suppression`
-contient uniquement : espace de noms `SIRET` ou `SIREN`, HMAC, version de clé,
-motif `SOURCE_PARTIAL_DIFFUSION`, source, dates de détection et de dernière
-confirmation, et date de levée éventuelle. Le SIRET ou SIREN brut, le nom,
-l'adresse, la fiche et ses contacts n'y sont pas copiés. La clé HMAC reste hors
-base. Une contrainte unique sur l'espace de noms et l'empreinte empêche les
-doublons actifs.
-
-La base légale, la portée exacte et la durée de cette empreinte doivent être
-validées avant l'activation du connecteur Sirene. Une empreinte HMAC est une donnée
-pseudonymisée, pas anonyme. Si sa conservation n'est pas validée, la procédure
-retire entièrement l'identité et accepte de ne plus disposer de cette barrière
-technique ; aucun connecteur Sirene ne peut être mis en production tant que la
-politique n'est pas arrêtée. Ce document ne décide pas à lui seul de la licéité.
+Le MVP ne possède pas de table `prospecting_suppression` et ne conserve aucune
+HMAC du SIRET ou du SIREN après cette purge. Les collectes ordinaires filtrent
+les statuts de diffusion de l'établissement et de l'unité légale sur `O`, ce
+qui empêche une réimportation tant que le fournisseur publie la restriction.
+Une future opposition enregistrée directement par l'utilisateur dans le CRM
+serait un besoin différent, avec sa propre finalité et sa propre politique de
+conservation. Ce document ne constitue pas un avis juridique.
 
 ### 19.3 Conservation technique
 
@@ -1646,8 +1638,8 @@ Les tests d'intégration de la base devront démontrer au minimum que :
 19. une observation en conflit d'identité reste en quarantaine, ne change pas
     la fiche et rend le cycle partiel ;
 20. un passage explicite en diffusion partielle retire la fiche des usages de
-    prospection sans la déclarer fermée et purge toute copie identifiante hors
-    liste repoussoir juridiquement validée ;
+    prospection sans la déclarer fermée, purge toute copie identifiante et ne
+    conserve qu'un compteur agrégé ;
 21. deux demandes de collecte identiques ne créent qu'un travail actif et un
     bail expiré peut être repris sans dupliquer une fiche ;
 22. l'état terminal du travail correspond au résultat final du cycle ;
@@ -1655,15 +1647,10 @@ Les tests d'intégration de la base devront démontrer au minimum que :
 
 ## 22. Décisions encore ouvertes
 
-Les points suivants ne bloquent pas la rédaction des autres documents, mais
-doivent être clos avant les migrations correspondantes :
+Le point restant ne bloque pas la rédaction des autres documents et sera clos
+après mesure du volume :
 
-1. avant l'activation du connecteur Sirene et la migration de conformité, la
-   politique exacte de purge et de liste
-   repoussoir lorsqu'un établissement ou son unité légale passe en diffusion
-   partielle, y compris la base légale, la portée et la durée éventuelle d'une
-   empreinte HMAC ;
-2. la politique de rétention à long terme des révisions et diagnostics de
+1. la politique de rétention à long terme des révisions et diagnostics de
    pages, à fixer seulement après mesure de leur volume.
 
 Le modèle est volontairement indépendant des réponses à ces points : elles
