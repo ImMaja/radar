@@ -1,5 +1,6 @@
 """End-to-end orchestration of the restart-safe Sirene prospect stages."""
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -72,6 +73,7 @@ class SireneFallbackGeocoder(Protocol):
     def geocode_pending(
         self,
         reservation: ReservedCollection,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> SireneFallbackGeocodingSummary: ...
 
 
@@ -167,7 +169,17 @@ class SireneProspectCollectionExecutor:
                 preserved,
                 "sirene_position_resolution_initial",
             )
-            fallback = self._fallback_geocoder.geocode_pending(reservation)
+            fallback = self._fallback_geocoder.geocode_pending(
+                reservation,
+                lambda processed, total: self._report(
+                    reporter,
+                    "sirene_fallback_geocoding",
+                    processed,
+                    total,
+                    preserved,
+                    "sirene_position_resolution_initial",
+                ),
+            )
             final_resolution = self._position_resolver.resolve(reservation)
             if final_resolution.geocoding_required_count != 0:
                 raise SirenePositionResolutionError(
@@ -200,7 +212,7 @@ class SireneProspectCollectionExecutor:
         except SireneFallbackGeocodingError as error:
             failure_type = RetryableCollectionError if error.transient else PermanentCollectionError
             raise failure_type(
-                "sirene_fallback_geocoding_failed",
+                error.code,
                 "Le géocodage de repli Sirene n'a pas pu être terminé.",
                 observations_preserved=preserved,
             ) from error
@@ -242,6 +254,7 @@ class SireneProspectCollectionExecutor:
             "file_missing_count": geolocation.missing_siret_count,
             "geocoder_requested_count": fallback.requested_count,
             "geocoder_usable_count": fallback.usable_count,
+            "geocoder_skipped_count": fallback.skipped_count,
             "location_unresolved_count": final_resolution.unresolved_count,
             "prospect_created_count": projection.created_count,
             "prospect_updated_count": projection.updated_count,

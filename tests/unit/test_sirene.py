@@ -273,6 +273,34 @@ def test_counts_a_concurrent_closed_object_without_exposing_it_as_a_candidate() 
     assert pages[0].importable_candidates == ()
 
 
+def test_accepts_an_unknown_state_only_on_historical_periods() -> None:
+    item = establishment()
+    periods = item["periodesEtablissement"]
+    assert isinstance(periods, list)
+    periods.append(
+        {
+            "dateDebut": "1999-01-01",
+            "dateFin": "2000-01-01",
+            "etatAdministratifEtablissement": None,
+        }
+    )
+    responses = [
+        search_response([item], total=1, cursor="*", next_cursor="terminal"),
+        search_response([], total=1, cursor="terminal", next_cursor=None),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=responses.pop(0), request=request)
+
+    summary = client_for(handler).collect_batch(
+        ("40088",),
+        "2026-09-20",
+        lambda _: None,
+    )
+
+    assert summary.importable_count == 1
+
+
 def test_looks_up_known_siret_states_in_one_bounded_exact_request() -> None:
     requested = ("12345678901234", "98765432109876", "55555555555555")
     requests: list[httpx.Request] = []
@@ -310,6 +338,63 @@ def test_looks_up_known_siret_states_in_one_bounded_exact_request() -> None:
     assert requests[0].url.params["nombre"] == str(MAX_STATUS_SIRETS_PER_BATCH)
     assert requests[0].url.params["date"] == "2026-09-20"
     assert "denominationUniteLegale" not in requests[0].url.params["champs"]
+
+
+def test_status_lookup_accepts_historical_unknown_state_but_not_current_unknown() -> None:
+    historical_item = establishment()
+    historical_periods = historical_item["periodesEtablissement"]
+    assert isinstance(historical_periods, list)
+    historical_periods.append(
+        {
+            "dateDebut": "1999-01-01",
+            "dateFin": "2000-01-01",
+            "etatAdministratifEtablissement": None,
+        }
+    )
+
+    def historical_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=search_response(
+                [historical_item],
+                total=1,
+                cursor="*",
+                next_cursor=None,
+            ),
+            request=request,
+        )
+
+    result = client_for(historical_handler).lookup_establishment_statuses(
+        ("12345678901234",),
+        "2026-09-20",
+    )
+
+    assert result.statuses[0].establishment_administrative_state == "ACTIVE"
+
+    current_item = establishment(establishment_state="A")
+    current_periods = current_item["periodesEtablissement"]
+    assert isinstance(current_periods, list)
+    current_period = current_periods[0]
+    assert isinstance(current_period, dict)
+    current_period["etatAdministratifEtablissement"] = None
+
+    def current_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=search_response(
+                [current_item],
+                total=1,
+                cursor="*",
+                next_cursor=None,
+            ),
+            request=request,
+        )
+
+    with pytest.raises(SireneContractError, match="no current administrative state"):
+        client_for(current_handler).lookup_establishment_statuses(
+            ("12345678901234",),
+            "2026-09-20",
+        )
 
 
 def test_status_lookup_exposes_partial_diffusion_without_treating_it_as_closure() -> None:

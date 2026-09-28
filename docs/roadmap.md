@@ -2,7 +2,7 @@
 
 > Statut : jalons 0 à 5 terminés ; jalon 6 en cours
 >
-> Dernière mise à jour : 24 septembre 2026
+> Dernière mise à jour : 28 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -463,12 +463,52 @@ une clé API et la provenance complète d'un Parquet mensuel local lisible. Un
 test PostgreSQL/PostGIS exécute cette composition par le vrai worker jusqu'au
 travail `SUCCEEDED`, à la fiche prospect et à la couverture publiée.
 
+Le dix-huitième incrément confronte cette composition aux données réelles de
+septembre autour de Dax. Il accepte un état administratif `null` uniquement
+sur une période historique close, reconnaît sans ambiguïté la casse minuscule
+des colonnes Parquet courantes et renouvelle le bail avec une progression tous
+les 100 géocodages persistés. L'adaptateur Géoplateforme effectue cinq reprises
+HTTP courtes et bornées pour les erreurs réseau, `429` et `5xx`. Le cycle réel
+a réconcilié 161 506 établissements et 160 429 lignes du fichier, puis prouvé
+la reprise de 9 449 résultats Géoplateforme sans relecture des sources déjà
+terminées. Trois erreurs fournisseur classées temporaires ont toutefois épuisé le cycle
+avec 4 745 adresses restantes : il est correctement `PARTIAL`, sans prospect
+ni couverture publiée. Le diagnostic de cette réponse fournisseur reste à
+terminer avant de clore le jalon.
+
+Le dix-neuvième incrément rend le prochain diagnostic fournisseur exploitable
+sans exposer de donnée métier. L'erreur Géoplateforme distingue désormais le
+réseau, les limitations, les statuts HTTP temporaires, les erreurs serveur et
+les requêtes fonctionnellement rejetées. L'exécution conserve uniquement le
+statut HTTP, le nombre d'essais courts et l'éventuel `Retry-After`, jamais
+l'adresse ni le corps fournisseur ; le compteur source additionne également
+les reprises courtes consommées. Un refus fonctionnel est définitif, tandis
+qu'une panne réellement temporaire reste éligible aux deux reprises durables.
+Un scénario PostgreSQL vérifie que ces preuves survivent à une reprise puis à
+la réussite de la source. La dernière tentative disponible clôt aussi la source
+en `FAILED` si la panne persiste, afin qu'un cycle terminal ne conserve pas un
+enfant faussement `RUNNING`. La transaction terminale possède le même filet de
+sécurité pour toute source inachevée, y compris après une erreur interne
+imprévue. Le premier appel diagnostique autorisé n'était pas exploitable : la
+commande avait encodé le saut de ligne terminal de `psql` dans le paramètre de
+recherche. Aucune règle n'en a été déduite.
+
+Le vingtième incrément répète correctement ce diagnostic ciblé, après une
+seconde autorisation explicite : la même adresse professionnelle sans voie
+exploitable reçoit bien un HTTP 400 sans `Retry-After`. Une mesure locale montre
+que 1 234 des 4 745 cibles restantes ont cette forme insuffisante, alors
+qu'aucune ne manque de code postal ou de commune. Radar les conserve désormais
+comme positions `MISSING`, sous une issue et un compteur explicites, sans les
+envoyer à Géoplateforme. Un test PostgreSQL vérifie l'absence d'appel et
+d'incrément du compteur fournisseur. Les HTTP 400 sur une adresse suffisante
+restent terminaux afin de révéler une éventuelle rupture générale du contrat.
+
 Le score, son filtre et son tri restent volontairement au jalon 8 et ne
-bloquent pas la sortie de ce jalon. Il reste à préparer le vrai fichier
-mensuel local, renseigner sa provenance puis exécuter une collecte opérationnelle
-contrôlée avant de déclarer le jalon terminé. La découverte et le
-téléchargement automatiques du prochain millésime sont reportés : ils ne sont
-pas nécessaires pour ce premier essai manuel.
+bloquent pas la sortie de ce jalon. Le vrai fichier et sa provenance sont
+maintenant validés ; il reste à terminer le repli fournisseur, obtenir un cycle
+opérationnel `SUCCEEDED` puis vérifier sa relance idempotente avant de déclarer
+le jalon terminé. La découverte et le téléchargement automatiques du prochain
+millésime sont reportés : ils ne sont pas nécessaires à cet essai manuel.
 
 ### Jalon 7 — Événements DATAtourisme de bout en bout
 

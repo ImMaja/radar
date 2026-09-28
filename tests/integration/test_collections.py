@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -266,6 +267,46 @@ def test_expired_lease_is_visible_and_safely_reserved_again(
         assert second.job_id == queued.job.id
         assert second.attempt_number == 2
         assert second.last_safe_checkpoint == {"page": 1}
+        source_run_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO collection_source_run (
+                        id,
+                        collection_cycle_id,
+                        source,
+                        status,
+                        counters,
+                        metadata,
+                        request_count,
+                        retry_count,
+                        error_count,
+                        contract_version,
+                        created_at,
+                        updated_at
+                    ) VALUES (
+                        :id,
+                        :cycle_id,
+                        'FIXTURE_SOURCE',
+                        'RUNNING',
+                        '{}'::jsonb,
+                        '{}'::jsonb,
+                        0,
+                        0,
+                        0,
+                        'fixture-v1',
+                        :now,
+                        :now
+                    )
+                    """
+                ),
+                {
+                    "id": source_run_id,
+                    "cycle_id": second.cycle_id,
+                    "now": recovered_at,
+                },
+            )
         repository.finish(
             second,
             "worker-after-crash",
@@ -289,9 +330,30 @@ def test_expired_lease_is_visible_and_safely_reserved_again(
                 ),
                 {"job_id": queued.job.id},
             ).all()
+            source_run = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT status, finished_at, error_count, metadata
+                        FROM collection_source_run
+                        WHERE id = :id
+                        """
+                    ),
+                    {"id": source_run_id},
+                )
+                .mappings()
+                .one()
+            )
         assert [tuple(attempt) for attempt in attempts] == [
             (1, "RETRYABLE_FAILURE"),
             (2, "PARTIAL"),
         ]
+        assert source_run["status"] == "FAILED"
+        assert source_run["finished_at"] == recovered_at
+        assert source_run["error_count"] == 1
+        assert source_run["metadata"]["last_failure"] == {
+            "code": "collection_finished_before_source",
+            "final": True,
+        }
     finally:
         engine.dispose()

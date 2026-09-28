@@ -8,6 +8,10 @@
 >
 > Politique de purge arrêtée après revue officielle : 24 septembre 2026
 >
+> Essai opérationnel du pipeline : 25–27 septembre 2026
+>
+> Diagnostic ciblé GeoPlateforme : 28 septembre 2026
+>
 > Périmètre : cercle de 50 km à vol d'oiseau autour de la mairie de Dax
 
 ## 1. Objet et conclusion
@@ -227,6 +231,79 @@ en repli, le classement géométrique brut donne :
 Ces trois comptes réconcilient les 160 165 candidats. Une position disponible
 n'est toutefois pas nécessairement assez précise pour devenir une distance
 exacte affichable.
+
+### 5.1.1 Essai opérationnel du pipeline
+
+Le premier cycle complet exécuté par le worker les 25–27 septembre 2026 a
+utilisé le fichier Parquet de septembre, ressource stable
+`672007af-0146-491f-835c-8314d63fa44e` :
+
+- taille `810 724 417` octets et `37 901 783` lignes ;
+- SHA-1 publié et vérifié :
+  `bd2901c1ce81a862cf733e41b2b6d9046b258273` ;
+- 19 colonnes publiées en minuscules, avec les neuf champs métier attendus ;
+- 161 506 établissements annoncés, reçus et uniques sur 14 lots et 182 pages ;
+- 161 501 candidats importables et 5 fermetures concurrentes rejetées ;
+- 160 429 SIRET joints au fichier et 1 072 absences normales ;
+- 14 194 adresses nécessitant le repli Géoplateforme après application des
+  règles de qualité et de cohérence communale.
+
+Cet essai a révélé deux tolérances de contrat nécessaires : certaines périodes
+historiques Sirene closes ont un état administratif `null`, et la casse des
+noms de colonnes du Parquet a changé sans changement sémantique. Radar accepte
+désormais ces deux variations sans relâcher le contrôle de l'état courant, des
+colonnes requises ni de leurs types.
+
+Le repli a persisté 9 449 issues avant trois erreurs classées comme temporaires
+par l'adaptateur. Les reprises n'ont rejoué ni les pages Sirene, ni la jointure
+Parquet, ni les issues déjà conservées. Le cycle s'est terminé `PARTIAL`, avec
+4 745 adresses encore en attente, zéro fiche prospect et aucune couverture
+publiée. Il valide donc les frontières de reprise et d'absence de faux succès,
+mais pas encore le critère de sortie opérationnel du jalon 6.
+
+À la suite de cet essai, l'adaptateur et l'exécution persistée distinguent les
+erreurs réseau, limitations `429`, autres statuts HTTP temporaires, erreurs
+serveur et requêtes fonctionnellement rejetées. Le prochain diagnostic
+conservera le statut, le nombre d'essais et l'éventuel `Retry-After`, sans
+conserver dans l'erreur l'adresse ni le corps fournisseur. Cette amélioration
+n'identifie pas rétroactivement la réponse des trois tentatives déjà terminées.
+L'exécution locale historique, restée à tort `RUNNING` sous ce cycle déjà
+`PARTIAL`, a été remise en cohérence en `FAILED` sans modifier ses 9 449 issues
+ni ses compteurs. La clôture atomique empêche désormais cette incohérence pour
+les futurs cycles.
+
+Après autorisation explicite, un premier appel ciblé a retransmis directement
+la première adresse professionnelle restante au service officiel, sans
+afficher ni conserver sa valeur ou le corps de réponse. Il a reçu un HTTP 400
+sans `Retry-After`, mais le contrôle de la commande a montré que le saut de
+ligne terminal de `psql` avait été encodé dans le paramètre `q`. Aucune règle
+n'a été déduite de cet essai invalide.
+
+Après une seconde autorisation explicite, l'appel a été répété en supprimant
+les retours de ligne avant l'encodage. Le service officiel a de nouveau répondu
+`HTTP 400`, sans `Retry-After`. L'adresse n'est pas vide et ne contient aucun
+caractère de contrôle, mais sa partie voie se limite à un libellé d'un seul
+caractère, sans numéro, répétition ni type de voie ; seuls le code postal et la
+commune complètent la recherche.
+
+Une mesure locale, sans nouvel appel externe, a ensuite classé les 4 745 cibles
+restantes :
+
+- 1 234 ont exactement cette forme insuffisante, sans numéro, répétition ni
+  type de voie et avec un libellé d'au plus un caractère ;
+- aucune ne manque de code postal ou de commune ;
+- les 3 511 autres conservent une voie localement suffisante et doivent encore
+  suivre le contrat Géoplateforme normal.
+
+Radar applique donc un contrôle avant appel : code postal et commune sont
+requis ; le libellé doit contenir au moins deux caractères, sauf si un type de
+voie est présent, ce qui conserve par exemple `RUE X`. Une cible insuffisante
+reste tracée avec l'issue `SKIPPED_INSUFFICIENT_ADDRESS`, une position
+`MISSING`, le diagnostic `GEOCODER_SKIPPED_INSUFFICIENT_ADDRESS` et le drapeau
+`provider_requested = false`. Elle n'incrémente pas `request_count`. Cette
+décision est volontairement plus étroite qu'une conversion générale des HTTP
+400 : un tel statut reçu pour une adresse jugée suffisante reste terminal et
+signale une éventuelle rupture du contrat fournisseur.
 
 ### 5.2 Cohérence et qualité
 

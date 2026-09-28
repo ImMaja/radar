@@ -15,6 +15,7 @@ from radar.prospects.fallback_geocoding import (
     GEOPLATFORM_POSITION_RULE_VERSION,
     GEOPLATFORM_SCHEMA_VERSION,
     SireneFallbackGeocodingError,
+    SireneFallbackGeocodingFailure,
     SireneFallbackGeocodingRun,
     SireneFallbackGeocodingSummary,
     SireneFallbackGeocodingTarget,
@@ -212,6 +213,7 @@ class SqlAlchemySireneFallbackGeocodingRepository:
             "content_fingerprint": outcome.content_fingerprint,
             "payload": json.dumps(outcome.payload, ensure_ascii=False, separators=(",", ":")),
             "outcome": outcome.outcome,
+            "provider_requested": outcome.provider_requested,
             "longitude": outcome.longitude,
             "latitude": outcome.latitude,
             "municipality_code": outcome.municipality_code,
@@ -233,7 +235,12 @@ class SqlAlchemySireneFallbackGeocodingRepository:
                         text(
                             """
                             UPDATE collection_source_run
-                            SET request_count = request_count + 1, updated_at = :now
+                            SET
+                                request_count = request_count + CASE
+                                    WHEN :provider_requested THEN 1
+                                    ELSE 0
+                                END,
+                                updated_at = :now
                             WHERE id = :source_run_id
                               AND collection_cycle_id = :cycle_id
                               AND status = 'RUNNING'
@@ -293,6 +300,7 @@ class SqlAlchemySireneFallbackGeocodingRepository:
                                 "usable_count": summary.usable_count,
                                 "to_verify_count": summary.to_verify_count,
                                 "missing_count": summary.missing_count,
+                                "skipped_count": summary.skipped_count,
                             }
                         ),
                         "now": now,
@@ -346,6 +354,7 @@ class SqlAlchemySireneFallbackGeocodingRepository:
             usable_count=self._counter(counters, "usable_count"),
             to_verify_count=self._counter(counters, "to_verify_count"),
             missing_count=self._counter(counters, "missing_count"),
+            skipped_count=self._optional_counter(counters, "skipped_count"),
         )
         summary.validate()
         return summary
@@ -355,8 +364,7 @@ class SqlAlchemySireneFallbackGeocodingRepository:
         reservation: ReservedCollection,
         run: SireneFallbackGeocodingRun,
         *,
-        code: str,
-        final: bool,
+        failure: SireneFallbackGeocodingFailure,
         now: datetime,
     ) -> None:
         """Keep completed items and mark whether the same source run may resume."""
@@ -371,12 +379,16 @@ class SqlAlchemySireneFallbackGeocodingRepository:
                         SET
                             status = CASE WHEN :final THEN 'FAILED' ELSE 'RUNNING' END,
                             finished_at = CASE WHEN :final THEN :now ELSE NULL END,
+                            retry_count = retry_count + :short_retry_count,
                             error_count = error_count + 1,
                             metadata = metadata || jsonb_build_object(
-                                'last_failure', jsonb_build_object(
+                                'last_failure', jsonb_strip_nulls(jsonb_build_object(
                                     'code', CAST(:code AS text),
-                                    'final', CAST(:final AS boolean)
-                                )
+                                    'final', CAST(:final AS boolean),
+                                    'http_status_code', CAST(:http_status_code AS integer),
+                                    'retry_after_seconds', CAST(:retry_after_seconds AS integer),
+                                    'attempts', CAST(:attempts AS integer)
+                                ))
                             ),
                             updated_at = :now
                         WHERE id = :source_run_id
@@ -387,8 +399,12 @@ class SqlAlchemySireneFallbackGeocodingRepository:
                     {
                         "source_run_id": run.id,
                         "cycle_id": reservation.cycle_id,
-                        "code": code,
-                        "final": final,
+                        "code": failure.code,
+                        "final": failure.final,
+                        "http_status_code": failure.http_status_code,
+                        "retry_after_seconds": failure.retry_after_seconds,
+                        "attempts": failure.attempts,
+                        "short_retry_count": max((failure.attempts or 1) - 1, 0),
                         "now": now,
                     },
                 )
@@ -677,6 +693,8 @@ class SqlAlchemySireneFallbackGeocodingRepository:
                     jsonb_strip_nulls(
                         jsonb_build_object(
                             'code', CASE
+                                WHEN :outcome = 'SKIPPED_INSUFFICIENT_ADDRESS'
+                                THEN 'GEOCODER_SKIPPED_INSUFFICIENT_ADDRESS'
                                 WHEN :outcome = 'NOT_FOUND'
                                 THEN 'GEOCODER_ADDRESS_NOT_FOUND'
                                 WHEN :outcome = 'OUTSIDE_METROPOLITAN_FRANCE'
@@ -757,7 +775,11 @@ class SqlAlchemySireneFallbackGeocodingRepository:
                         ) AS to_verify_count,
                         count(position.id) FILTER (
                             WHERE position.usability = 'MISSING'
-                        ) AS missing_count
+                        ) AS missing_count,
+                        count(position.id) FILTER (
+                            WHERE observation.payload ->> 'outcome'
+                                = 'SKIPPED_INSUFFICIENT_ADDRESS'
+                        ) AS skipped_count
                     FROM collection_item AS item
                     JOIN collection_batch AS batch
                       ON batch.id = item.collection_batch_id
@@ -783,8 +805,8 @@ class SqlAlchemySireneFallbackGeocodingRepository:
             .one()
         )
 
-    @staticmethod
-    def _target_from_row(row: RowMapping) -> SireneFallbackGeocodingTarget:
+    @classmethod
+    def _target_from_row(cls, row: RowMapping) -> SireneFallbackGeocodingTarget:
         collection_item_id = row["collection_item_id"]
         external_identity_id = row["external_identity_id"]
         municipality_code = row["municipality_code"]
@@ -813,11 +835,21 @@ class SqlAlchemySireneFallbackGeocodingRepository:
                 "fallback geocoding target has no bounded public address",
                 transient=False,
             )
+        street_type = cls._normalized_part(row["street_type"])
+        street_label = cls._normalized_part(row["street_label"])
+        postcode = cls._normalized_part(row["postcode"])
+        municipality_label = cls._normalized_part(row["municipality_label"])
+        query_is_sufficient = bool(
+            postcode
+            and municipality_label
+            and (len(street_label) >= 2 or (len(street_label) == 1 and street_type))
+        )
         return SireneFallbackGeocodingTarget(
             collection_item_id=collection_item_id,
             external_identity_id=external_identity_id,
             input_address=address,
             expected_municipality_code=municipality_code,
+            query_is_sufficient=query_is_sufficient,
         )
 
     @staticmethod
@@ -839,7 +871,22 @@ class SqlAlchemySireneFallbackGeocodingRepository:
             usable_count=cast(int, row["usable_count"]),
             to_verify_count=cast(int, row["to_verify_count"]),
             missing_count=cast(int, row["missing_count"]),
+            skipped_count=cast(int, row["skipped_count"]),
         )
+
+    @staticmethod
+    def _normalized_part(value: object) -> str:
+        return " ".join(value.split()) if isinstance(value, str) else ""
+
+    @staticmethod
+    def _optional_counter(counters: dict[object, object], key: str) -> int:
+        value = counters.get(key, 0)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise SireneFallbackGeocodingError(
+                "completed fallback geocoding counters are invalid",
+                transient=False,
+            )
+        return value
 
     @staticmethod
     def _counter(counters: dict[object, object], key: str) -> int:

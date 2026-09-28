@@ -666,6 +666,13 @@ class SqlAlchemyCollectionRepository:
             self._require_owned_job(connection, reservation, worker_id)
             error_json = json.dumps(error.as_dict()) if error is not None else None
             counters_json = json.dumps(counters)
+            if result != "SUCCEEDED":
+                self._close_unfinished_sources(
+                    connection,
+                    reservation.cycle_id,
+                    now,
+                    "collection_finished_before_source",
+                )
             connection.execute(
                 text(
                     """
@@ -886,6 +893,12 @@ class SqlAlchemyCollectionRepository:
             "observations": progress.observations,
             "processed": progress.processed,
         }
+        SqlAlchemyCollectionRepository._close_unfinished_sources(
+            connection,
+            row["cycle_id"],
+            now,
+            "collection_retry_budget_exhausted",
+        )
         connection.execute(
             text(
                 """
@@ -909,6 +922,7 @@ class SqlAlchemyCollectionRepository:
                 "error": error_json,
             },
         )
+
         connection.execute(
             text(
                 """
@@ -928,4 +942,44 @@ class SqlAlchemyCollectionRepository:
                 "counters": json.dumps(counters),
                 "error": error_json,
             },
+        )
+
+    @staticmethod
+    def _close_unfinished_sources(
+        connection: Connection,
+        cycle_id: UUID,
+        now: datetime,
+        code: str,
+    ) -> None:
+        """Prevent non-terminal source runs from surviving a terminal collection."""
+
+        connection.execute(
+            text(
+                """
+                UPDATE collection_source_run
+                SET
+                    status = 'FAILED',
+                    finished_at = COALESCE(finished_at, :now),
+                    error_count = error_count + CASE
+                        WHEN metadata ? 'last_failure' THEN 0
+                        ELSE 1
+                    END,
+                    metadata = jsonb_set(
+                        metadata || CASE
+                            WHEN metadata ? 'last_failure' THEN '{}'::jsonb
+                            ELSE jsonb_build_object(
+                                'last_failure',
+                                jsonb_build_object('code', CAST(:code AS text))
+                            )
+                        END,
+                        '{last_failure,final}',
+                        'true'::jsonb,
+                        true
+                    ),
+                    updated_at = :now
+                WHERE collection_cycle_id = :cycle_id
+                  AND status IN ('PLANNED', 'RUNNING')
+                """
+            ),
+            {"cycle_id": cycle_id, "now": now, "code": code},
         )

@@ -18,25 +18,57 @@ from radar.geography.contracts import (
     GeocodedAddress,
     Geocoder,
     GeocodingContractError,
+    GeocodingFailureReason,
     GeocodingUnavailableError,
 )
 
 GEOPLATFORM_DATA_SOURCE_CODE = "GEOPLATFORM_GEOCODER"
-GEOPLATFORM_ADAPTER_VERSION = "geoplatform-address-v1"
-GEOPLATFORM_SCHEMA_VERSION = "sirene-fallback-geocoding-v1"
-GEOPLATFORM_POSITION_RULE_VERSION = "sirene-geoplatform-position-v1"
+GEOPLATFORM_ADAPTER_VERSION = "geoplatform-address-v2"
+GEOPLATFORM_SCHEMA_VERSION = "sirene-fallback-geocoding-v2"
+GEOPLATFORM_POSITION_RULE_VERSION = "sirene-geoplatform-position-v2"
 MIN_REQUEST_INTERVAL_SECONDS = 0.05
+PROGRESS_REPORT_INTERVAL = 100
 
 _MUNICIPALITY_CODE = re.compile(r"^(?:[0-9]{5}|2[AB][0-9]{3})$")
-GeocodingOutcome = Literal["MATCHED", "NOT_FOUND", "OUTSIDE_METROPOLITAN_FRANCE"]
+GeocodingOutcome = Literal[
+    "MATCHED",
+    "NOT_FOUND",
+    "SKIPPED_INSUFFICIENT_ADDRESS",
+    "OUTSIDE_METROPOLITAN_FRANCE",
+]
+FallbackFailureCode = Literal[
+    "geocoder_unavailable",
+    "geocoder_network_error",
+    "geocoder_rate_limited",
+    "geocoder_temporary_http_error",
+    "geocoder_server_error",
+    "geocoder_request_rejected",
+    "geocoder_contract_changed",
+]
+
+_FAILURE_CODE_BY_REASON: dict[GeocodingFailureReason, FallbackFailureCode] = {
+    "unknown": "geocoder_unavailable",
+    "network": "geocoder_network_error",
+    "rate_limited": "geocoder_rate_limited",
+    "temporary_http": "geocoder_temporary_http_error",
+    "server_error": "geocoder_server_error",
+    "request_rejected": "geocoder_request_rejected",
+}
 
 
 class SireneFallbackGeocodingError(RuntimeError):
     """The fallback geocoding stage cannot safely complete or reconcile."""
 
-    def __init__(self, message: str, *, transient: bool) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        transient: bool,
+        code: str = "sirene_fallback_geocoding_failed",
+    ) -> None:
         super().__init__(message)
         self.transient = transient
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -48,6 +80,25 @@ class SireneFallbackGeocodingRun:
 
 
 @dataclass(frozen=True)
+class SireneFallbackGeocodingFailure:
+    """Non-sensitive provider diagnostics safe to persist and display."""
+
+    code: FallbackFailureCode
+    final: bool
+    http_status_code: int | None = None
+    retry_after_seconds: int | None = None
+    attempts: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.http_status_code is not None and not 100 <= self.http_status_code <= 599:
+            raise ValueError("fallback failure HTTP status code is invalid")
+        if self.retry_after_seconds is not None and self.retry_after_seconds < 0:
+            raise ValueError("fallback failure retry delay cannot be negative")
+        if self.attempts is not None and self.attempts < 1:
+            raise ValueError("fallback failure attempt count must be positive")
+
+
+@dataclass(frozen=True)
 class SireneFallbackGeocodingTarget:
     """One public establishment address still requiring a provider lookup."""
 
@@ -55,6 +106,7 @@ class SireneFallbackGeocodingTarget:
     external_identity_id: UUID
     input_address: str
     expected_municipality_code: str
+    query_is_sufficient: bool
 
 
 @dataclass(frozen=True)
@@ -63,6 +115,7 @@ class StagedSireneFallbackGeocoding:
 
     target: SireneFallbackGeocodingTarget
     outcome: GeocodingOutcome
+    provider_requested: bool
     content_fingerprint: str
     payload: dict[str, object]
     longitude: float | None
@@ -83,6 +136,7 @@ class SireneFallbackGeocodingSummary:
     usable_count: int
     to_verify_count: int
     missing_count: int
+    skipped_count: int = 0
 
     def validate(self) -> None:
         """Reject counters that could hide a skipped or duplicated address."""
@@ -93,6 +147,7 @@ class SireneFallbackGeocodingSummary:
             self.usable_count,
             self.to_verify_count,
             self.missing_count,
+            self.skipped_count,
         )
         if any(count < 0 for count in counts):
             raise SireneFallbackGeocodingError(
@@ -107,6 +162,11 @@ class SireneFallbackGeocodingSummary:
         if self.matched_count != self.usable_count + self.to_verify_count:
             raise SireneFallbackGeocodingError(
                 "fallback geocoding matched count is inconsistent",
+                transient=False,
+            )
+        if self.skipped_count > self.missing_count:
+            raise SireneFallbackGeocodingError(
+                "fallback geocoding skipped count exceeds missing outcomes",
                 transient=False,
             )
 
@@ -152,8 +212,7 @@ class SireneFallbackGeocodingBackend(Protocol):
         reservation: ReservedCollection,
         run: SireneFallbackGeocodingRun,
         *,
-        code: str,
-        final: bool,
+        failure: SireneFallbackGeocodingFailure,
         now: datetime,
     ) -> None: ...
 
@@ -169,7 +228,7 @@ def normalize_fallback_geocoding(
     outcome: GeocodingOutcome,
     result: GeocodedAddress | None,
 ) -> StagedSireneFallbackGeocoding:
-    """Build a deterministic, provider-owned observation for one lookup outcome."""
+    """Build deterministic evidence for one provider lookup or local skip."""
 
     if not target.input_address.strip():
         raise ValueError("fallback geocoding address cannot be empty")
@@ -202,6 +261,7 @@ def normalize_fallback_geocoding(
         "request": {
             "input_address": target.input_address,
             "expected_municipality_code": target.expected_municipality_code,
+            "provider_requested": outcome != "SKIPPED_INSUFFICIENT_ADDRESS",
         },
         "outcome": outcome,
         "result": normalized_result,
@@ -216,6 +276,7 @@ def normalize_fallback_geocoding(
     return StagedSireneFallbackGeocoding(
         target=target,
         outcome=outcome,
+        provider_requested=outcome != "SKIPPED_INSUFFICIENT_ADDRESS",
         content_fingerprint=hashlib.sha256(canonical).hexdigest(),
         payload=payload,
         longitude=result.longitude if result is not None else None,
@@ -250,6 +311,7 @@ class SireneFallbackGeocodingService:
     def geocode_pending(
         self,
         reservation: ReservedCollection,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> SireneFallbackGeocodingSummary:
         """Resume unresolved addresses and complete only after full reconciliation."""
 
@@ -266,7 +328,27 @@ class SireneFallbackGeocodingService:
                 transient=False,
             )
 
-        for target in self._backend.pending_targets(reservation, run):
+        targets = self._backend.pending_targets(reservation, run)
+        total = len(targets)
+        for processed, target in enumerate(targets, start=1):
+            if not target.query_is_sufficient:
+                staged = normalize_fallback_geocoding(
+                    target,
+                    "SKIPPED_INSUFFICIENT_ADDRESS",
+                    None,
+                )
+                self._backend.stage_outcome(
+                    reservation,
+                    run,
+                    staged,
+                    self._clock(),
+                )
+                if on_progress is not None and (
+                    processed % PROGRESS_REPORT_INTERVAL == 0 or processed == total
+                ):
+                    on_progress(processed, total)
+                continue
+
             self._wait_for_rate_limit()
             try:
                 result = self._geocoder.geocode(target.input_address)
@@ -280,16 +362,42 @@ class SireneFallbackGeocodingService:
                     None,
                 )
             except GeocodingUnavailableError as error:
-                self._record_failure(reservation, run, "geocoder_unavailable", final=False)
+                failure_code = _FAILURE_CODE_BY_REASON[error.reason]
+                request_rejected = error.reason == "request_rejected"
+                final = request_rejected or (reservation.attempt_number >= reservation.max_attempts)
+                self._record_failure(
+                    reservation,
+                    run,
+                    SireneFallbackGeocodingFailure(
+                        code=failure_code,
+                        final=final,
+                        http_status_code=error.status_code,
+                        retry_after_seconds=error.retry_after_seconds,
+                        attempts=error.attempts,
+                    ),
+                )
                 raise SireneFallbackGeocodingError(
-                    "the fallback geocoder is temporarily unavailable",
-                    transient=True,
+                    (
+                        "the fallback geocoder rejected the request"
+                        if request_rejected
+                        else "the fallback geocoder is temporarily unavailable"
+                    ),
+                    transient=not request_rejected,
+                    code=f"sirene_fallback_{failure_code}",
                 ) from error
             except GeocodingContractError as error:
-                self._record_failure(reservation, run, "geocoder_contract_changed", final=True)
+                self._record_failure(
+                    reservation,
+                    run,
+                    SireneFallbackGeocodingFailure(
+                        code="geocoder_contract_changed",
+                        final=True,
+                    ),
+                )
                 raise SireneFallbackGeocodingError(
                     "the fallback geocoder contract changed",
                     transient=False,
+                    code="sirene_fallback_geocoder_contract_changed",
                 ) from error
             self._backend.stage_outcome(
                 reservation,
@@ -297,6 +405,10 @@ class SireneFallbackGeocodingService:
                 staged,
                 self._clock(),
             )
+            if on_progress is not None and (
+                processed % PROGRESS_REPORT_INTERVAL == 0 or processed == total
+            ):
+                on_progress(processed, total)
 
         summary = self._backend.complete_run(reservation, run, self._clock())
         summary.validate()
@@ -312,14 +424,11 @@ class SireneFallbackGeocodingService:
         self,
         reservation: ReservedCollection,
         run: SireneFallbackGeocodingRun,
-        code: str,
-        *,
-        final: bool,
+        failure: SireneFallbackGeocodingFailure,
     ) -> None:
         self._backend.record_failure(
             reservation,
             run,
-            code=code,
-            final=final,
+            failure=failure,
             now=self._clock(),
         )

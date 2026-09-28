@@ -1,6 +1,6 @@
 """Tests for the end-to-end Sirene stage composition."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -126,10 +126,17 @@ class FixtureFallbackGeocoder:
     def geocode_pending(
         self,
         _reservation: ReservedCollection,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> SireneFallbackGeocodingSummary:
         self._calls.append("geocode")
         if self._transient_failure:
-            raise SireneFallbackGeocodingError("temporary failure", transient=True)
+            raise SireneFallbackGeocodingError(
+                "temporary failure",
+                transient=True,
+                code="sirene_fallback_geocoder_server_error",
+            )
+        if on_progress is not None:
+            on_progress(1, 1)
         return SireneFallbackGeocodingSummary(1, 1, 1, 0, 0)
 
 
@@ -211,9 +218,19 @@ def test_composes_every_stage_and_returns_reconciled_coverage() -> None:
         "sirene_geolocation",
         "sirene_position_resolution",
         "sirene_fallback_geocoding",
+        "sirene_fallback_geocoding",
         "sirene_projection",
         "sirene_known_status",
         "sirene_complete",
+    ]
+    fallback_progress = [
+        progress
+        for progress, _ in reporter.updates
+        if progress.stage == "sirene_fallback_geocoding"
+    ]
+    assert [(progress.processed, progress.total) for progress in fallback_progress] == [
+        (0, 1),
+        (1, 1),
     ]
 
 
@@ -226,6 +243,6 @@ def test_maps_temporary_fallback_failure_to_a_retryable_collection() -> None:
             FixtureReporter(),
         )
 
-    assert captured.value.error.code == "sirene_fallback_geocoding_failed"
+    assert captured.value.error.code == "sirene_fallback_geocoder_server_error"
     assert captured.value.observations_preserved == 2
     assert calls == ["enumerate", "geolocation", "resolve-1", "geocode"]

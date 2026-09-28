@@ -2,7 +2,7 @@
 
 > Statut : cadrage technique du MVP
 >
-> Dernière mise à jour : 23 septembre 2026
+> Dernière mise à jour : 28 septembre 2026
 >
 > Périmètre : monolithe modulaire déployé sur un serveur privé
 
@@ -484,6 +484,11 @@ en_attente -> en_cours -> reussi
   reprises prévues sont épuisées. Si elles sont épuisées après la conservation
   d'au moins une observation valide, le résultat final est `partiel`.
 
+La transaction terminale `partiel` ou `échec` clôt également en `FAILED` toute
+exécution de source encore `PLANNED` ou `RUNNING`. Cette protection générique
+couvre notamment une erreur interne imprévue : un cycle terminé ne peut pas
+laisser croire qu'un de ses fournisseurs travaille encore.
+
 La distinction physique entre travail, tentative et cycle sera précisée dans
 `docs/database.md`; ces états et leur sens constituent l'invariant
 architectural.
@@ -492,7 +497,9 @@ Le worker réserve un travail disponible dans une courte transaction, avec un
 verrouillage PostgreSQL adapté tel que `FOR UPDATE SKIP LOCKED`, lui attribue
 un bail puis libère la transaction avant tout appel réseau. Il renouvelle le
 bail régulièrement. Au redémarrage, un bail expiré rend le travail à nouveau
-réservable.
+réservable. Toute boucle longue renouvelle ce bail à une frontière bornée et
+idempotente ; le géocodage Sirene le fait tous les 100 résultats, après leur
+persistance, et expose le même compteur comme progression publique.
 
 La livraison est donc « au moins une fois », pas magiquement « exactement une
 fois ». L'idempotence des imports, les clés externes et les contraintes de base
@@ -593,6 +600,20 @@ fois au niveau de son unité logique, initialement après 30 minutes puis
 4 heures. Une erreur de schéma, d'authentification, de licence, de requête ou
 de comptage n'est pas répétée aveuglément. Elle demande une correction ou une
 nouvelle exécution complète de l'unité concernée.
+
+Le repli Géoplateforme conserve pour une panne seulement sa catégorie
+contrôlée, le statut HTTP éventuel, le nombre de tentatives courtes et un
+`Retry-After` numérique éventuel. Il n'enregistre dans le diagnostic ni
+l'adresse envoyée ni le corps de la réponse. Un refus HTTP fonctionnel est
+permanent ; les erreurs réseau et HTTP temporaires passent par la reprise
+durable après épuisement des cinq essais courts propres à cet adaptateur.
+
+Avant tout appel, Radar vérifie que l'adresse Sirene possède un code postal,
+une commune et une voie minimale. Une adresse manifestement insuffisante est
+conservée avec une position `MISSING` et un diagnostic local distinct ; elle ne
+consomme pas une requête Géoplateforme. Cette règle ne transforme pas tous les
+HTTP 400 en absences normales : un tel refus sur une adresse jugée suffisante
+reste terminal, car il peut signaler une rupture globale du contrat externe.
 
 Un point de reprise n'est utilisé que si le fournisseur garantit sa validité :
 

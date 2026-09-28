@@ -183,7 +183,7 @@ class _Period(_SireneModel):
         alias="dateFin",
         pattern=r"^\d{4}-\d{2}-\d{2}$",
     )
-    administrative_state: Literal["A", "F"] = Field(alias="etatAdministratifEtablissement")
+    administrative_state: Literal["A", "F"] | None = Field(alias="etatAdministratifEtablissement")
     usual_name: str | None = Field(
         default=None,
         alias="denominationUsuelleEtablissement",
@@ -296,7 +296,7 @@ class _StatusPeriod(_SireneModel):
         alias="dateFin",
         pattern=r"^\d{4}-\d{2}-\d{2}$",
     )
-    administrative_state: Literal["A", "F"] = Field(alias="etatAdministratifEtablissement")
+    administrative_state: Literal["A", "F"] | None = Field(alias="etatAdministratifEtablissement")
 
 
 class _StatusLegalUnit(_SireneModel):
@@ -764,6 +764,10 @@ class SireneClient:
                     "a targeted Sirene establishment has no unique current period"
                 )
             current = current_periods[0]
+            if current.administrative_state is None:
+                raise SireneContractError(
+                    "a targeted Sirene establishment has no current administrative state"
+                )
             by_siret[establishment.siret] = SireneEstablishmentStatus(
                 siret=establishment.siret,
                 siren=establishment.siren,

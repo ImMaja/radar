@@ -68,6 +68,19 @@ complète est assemblée dans le worker. Le connecteur n'est proposé dans
 l'interface que lorsqu'une clé Sirene et un fichier mensuel local accompagné
 de sa provenance complète sont configurés.
 
+Un essai opérationnel sur le millésime de septembre a réconcilié 161 506
+établissements et 160 429 positions fichier, puis validé la reprise fine du
+géocodage de repli. Il a aussi conduit à accepter les états nuls des seules
+périodes historiques, la casse minuscule du Parquet et à renouveler le bail
+tous les 100 résultats. Le cycle reste volontairement sans couverture : trois
+erreurs Géoplateforme classées temporaires l'ont arrêté `PARTIAL` avec 4 745
+adresses à traiter, sans créer de prospect prématuré. Un diagnostic ciblé a
+confirmé le rejet HTTP 400 d'une adresse Sirene sans voie exploitable. Radar
+écarte désormais localement ces adresses manifestement insuffisantes, les
+conserve comme non localisables et ne les compte pas comme requêtes fournisseur.
+Les autres diagnostics distinguent réseau, limitation, erreur serveur et
+requête rejetée, sans recopier l'adresse ni le corps reçu.
+
 Le MVP est prévu pour un seul utilisateur et un seul food truck. Il sera
 accessible sur Internet derrière une authentification, sans exposer
 PostgreSQL publiquement.

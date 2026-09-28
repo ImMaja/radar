@@ -2,7 +2,7 @@
 
 > Statut : contrats du MVP validés autour de Dax
 >
-> Dernière mise à jour : 21 septembre 2026
+> Dernière mise à jour : 28 septembre 2026
 >
 > Périmètre : France métropolitaine, MVP Sirene et DATAtourisme
 
@@ -301,6 +301,12 @@ validation n'étaient déjà plus actifs lors de ce contrôle postérieur. Ils s
 comptés comme reçus pour réconcilier la pagination, mais rejetés de l'import
 métier. Une période historique active ne suffit jamais.
 
+L'essai opérationnel du 27 septembre 2026 a également confirmé que
+`etatAdministratifEtablissement` peut être `null` dans d'anciennes périodes
+closes. Cette absence historique est acceptée puisqu'elle ne décrit pas l'état
+courant. La période sans date de fin reste, elle, contrôlée strictement : un
+état courant absent n'est jamais interprété comme une fermeture.
+
 ### 5.4 Lots, curseurs et complétude
 
 La limite des 10 000 résultats de la pagination classique n'impose pas de
@@ -382,8 +388,8 @@ repli lorsque la coordonnée API n'est pas utilisable.
 
 Ce jeu contient notamment le SIRET, des coordonnées X/Y Lambert-93, des
 coordonnées longitude/latitude WGS84, le code commune et des variables de
-qualité. Le fichier d'août 2026 pèse `809 215 388` octets au format Parquet et
-contient `37 820 296` lignes ; son volume doit être pris en compte sans être
+qualité. Le fichier de septembre 2026 pèse `810 724 417` octets au format
+Parquet et contient `37 901 783` lignes ; son volume doit être pris en compte sans être
 confondu avec le volume final conservé par Radar.
 
 Le lecteur retenu au jalon 6 est DuckDB embarqué dans le processus worker. Il
@@ -391,7 +397,10 @@ n'est pas un stockage métier : une base temporaire en mémoire contient
 uniquement les SIRET attendus, puis une jointure locale lit dans le Parquet les
 colonnes `SIRET`, `X`, `Y`, `QUALITE_XY`, `EPSG`, `PLG_CODE_COMMUNE`,
 `DISTANCE_PRECISION`, `y_latitude` et `x_longitude`. Le schéma et les types
-documentés par l'Insee sont contrôlés avant la première émission. Les lignes
+documentés par l'Insee sont contrôlés avant la première émission. Le fichier de
+septembre 2026 publie ces mêmes noms en minuscules : le contrôle est donc
+insensible à la casse, mais refuse une colonne manquante, un type inattendu ou
+deux noms ambigus qui ne différeraient que par leur casse. Les lignes
 correspondantes sont transmises par lots bornés ; les colonnes et lignes
 inutiles ne sont jamais copiées dans PostgreSQL.
 
@@ -467,7 +476,41 @@ un plafond interne de 20 requêtes par seconde, plus prudent que la limite
 fournisseur documentée. Chaque résultat est persisté avant l'appel suivant ;
 une reprise n'interroge donc que les occurrences encore sans résultat. La
 source n'est déclarée réussie qu'après réconciliation de toutes les adresses
-demandées.
+demandées. Tous les 100 résultats persistés, le worker publie aussi la
+progression et renouvelle son bail ; une longue passe ne peut donc ni paraître
+figée ni devenir réservable par un second worker encore actif.
+
+Une erreur réseau, un `429` ou un `5xx` dispose d'abord de cinq tentatives
+HTTP courtes avec attente progressive et respect de `Retry-After`. Une attente
+fournisseur supérieure à 60 secondes ou l'épuisement de ces tentatives rend la
+main à la reprise durable du travail ; une erreur fonctionnelle `4xx` n'est pas
+répétée aveuglément. La dernière erreur conserve seulement une catégorie
+contrôlée, le statut HTTP, le nombre de tentatives et l'éventuel délai
+`Retry-After` ; ni l'adresse demandée ni le corps de réponse ne figurent dans ce
+diagnostic. Un `4xx` autre que `408`, `425` ou `429` rend l'étape définitivement
+échouée, tandis que réseau, `408`, `425`, `429` et `5xx` restent admissibles à
+la reprise durable. Si la dernière tentative durable du travail rencontre
+encore l'une de ces pannes temporaires, l'erreur garde cette nature mais
+l'exécution de source passe tout de même à `FAILED` : aucun enfant `RUNNING` ne
+subsiste sous un cycle terminal.
+
+Un contrôle local précède toutefois l'appel. La requête est considérée
+insuffisante si le code postal ou la commune manque, ou si le libellé de voie
+contient moins de deux caractères sans type de voie. Elle reçoit alors l'issue
+`SKIPPED_INSUFFICIENT_ADDRESS`, une position `MISSING` et le diagnostic
+`GEOCODER_SKIPPED_INSUFFICIENT_ADDRESS`. L'observation et la provenance Sirene
+sont conservées, mais aucun appel Géoplateforme n'a lieu et `request_count`
+n'est pas incrémenté. Une voie d'un caractère reste admissible lorsqu'un type
+de voie est présent, par exemple `RUE X`.
+
+Cette règle vient d'un diagnostic contrôlé du 28 septembre 2026 : après
+suppression explicite du saut de ligne produit par l'outil SQL, l'adresse
+professionnelle restante visée a reçu un HTTP 400 sans `Retry-After`. Parmi les
+4 745 adresses restantes du cycle de Dax, 1 234 présentent la même forme
+insuffisante ; aucune ne manque de code postal ou de commune. Les autres
+adresses continuent d'être envoyées normalement. En particulier, un HTTP 400
+sur une requête localement suffisante reste une erreur terminale plutôt qu'une
+absence silencieuse.
 
 Radar conserve le score renvoyé, mais ne fixe aucun seuil numérique non validé.
 Un résultat devient automatiquement utilisable seulement si son type est

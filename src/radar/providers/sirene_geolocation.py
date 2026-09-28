@@ -163,16 +163,28 @@ def _schema(connection: duckdb.DuckDBPyConnection, path: Path) -> dict[str, str]
         [str(path)],
     ).fetchall()
     schema = {cast(str, row[0]): cast(str, row[1]).upper() for row in rows}
-    missing = REQUIRED_COLUMNS - schema.keys()
+    normalized_schema: dict[str, tuple[str, str]] = {}
+    for column, column_type in schema.items():
+        normalized = column.casefold()
+        if normalized in normalized_schema:
+            raise SireneGeolocationFileError(
+                "Sirene geolocation schema contains ambiguous column names"
+            )
+        normalized_schema[normalized] = (column, column_type)
+    missing = {column for column in REQUIRED_COLUMNS if column.casefold() not in normalized_schema}
     if missing:
         raise SireneGeolocationFileError(
             "Sirene geolocation schema is missing required columns: " + ", ".join(sorted(missing))
         )
     invalid_text = sorted(
-        column for column in TEXT_COLUMNS if not schema[column].startswith("VARCHAR")
+        column
+        for column in TEXT_COLUMNS
+        if not normalized_schema[column.casefold()][1].startswith("VARCHAR")
     )
     invalid_numeric = sorted(
-        column for column in NUMERIC_COLUMNS if not schema[column].startswith(_NUMERIC_DUCKDB_TYPES)
+        column
+        for column in NUMERIC_COLUMNS
+        if not normalized_schema[column.casefold()][1].startswith(_NUMERIC_DUCKDB_TYPES)
     )
     if invalid_text or invalid_numeric:
         invalid = ", ".join(invalid_text + invalid_numeric)

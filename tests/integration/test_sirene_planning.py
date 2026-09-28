@@ -20,7 +20,12 @@ from radar.collections.contracts import (
     ReservedCollection,
 )
 from radar.collections.worker import CollectionWorker
-from radar.geography.contracts import AddressNotFoundError, GeocodedAddress, StructuredAddress
+from radar.geography.contracts import (
+    AddressNotFoundError,
+    GeocodedAddress,
+    GeocodingUnavailableError,
+    StructuredAddress,
+)
 from radar.persistence.collections import SqlAlchemyCollectionRepository
 from radar.persistence.geography import SqlAlchemyGeographyRepository
 from radar.persistence.reference_data import SqlAlchemyMunicipalityReferenceRepository
@@ -44,7 +49,10 @@ from radar.prospects.contracts import (
     LambertCoordinates,
     ProspectCandidate,
 )
-from radar.prospects.fallback_geocoding import SireneFallbackGeocodingService
+from radar.prospects.fallback_geocoding import (
+    SireneFallbackGeocodingError,
+    SireneFallbackGeocodingService,
+)
 from radar.prospects.geolocation import (
     SireneGeolocationImportService,
     SireneGeolocationReleaseSource,
@@ -148,7 +156,9 @@ def staging_candidate(
     *,
     siret: str = "12345678901234",
     siren: str = "123456789",
-    street_number: str = "12",
+    street_number: str | None = "12",
+    street_type: str | None = "RUE",
+    street_label: str | None = "SAINT PIERRE",
 ) -> ProspectCandidate:
     return ProspectCandidate(
         siret=siret,
@@ -165,8 +175,8 @@ def staging_candidate(
             address_identifier="ADDR-1",
             street_number=street_number,
             repetition_index=None,
-            street_type="RUE",
-            street_label="SAINT PIERRE",
+            street_type=street_type,
+            street_label=street_label,
             address_complement=None,
             postcode="40100",
             municipality_label="DAX",
@@ -268,11 +278,20 @@ class FixtureSireneReader:
 class FixtureFallbackGeocoder:
     """Return one public address result without making a network request."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, fail_once: bool = False) -> None:
         self.queries: list[str] = []
+        self._fail_once = fail_once
 
     def geocode(self, input_address: str) -> GeocodedAddress:
         self.queries.append(input_address)
+        if self._fail_once:
+            self._fail_once = False
+            raise GeocodingUnavailableError(
+                "fixture server error",
+                reason="server_error",
+                status_code=503,
+                attempts=5,
+            )
         if input_address.startswith("14 "):
             raise AddressNotFoundError("fixture address not found")
         return GeocodedAddress(
@@ -859,7 +878,9 @@ def test_runs_retryable_sirene_pipeline_and_refreshes_existing_prospect(
     candidate_unresolved = staging_candidate(
         siret="66666666666666",
         siren="666666666",
-        street_number="14",
+        street_number=None,
+        street_type=None,
+        street_label="X",
     )
     candidate_outside_radius = staging_candidate(
         LambertCoordinates(float(lambert[2]), float(lambert[3])),
@@ -1080,7 +1101,7 @@ def test_runs_retryable_sirene_pipeline_and_refreshes_existing_prospect(
         assert resolution.divergent_count == 0
         assert repeated_resolution == resolution
 
-        fixture_geocoder = FixtureFallbackGeocoder()
+        fixture_geocoder = FixtureFallbackGeocoder(fail_once=True)
         fallback_service = SireneFallbackGeocodingService(
             SqlAlchemySireneFallbackGeocodingRepository(engine),
             fixture_geocoder,
@@ -1088,6 +1109,10 @@ def test_runs_retryable_sirene_pipeline_and_refreshes_existing_prospect(
             monotonic=lambda: 1.0,
             sleeper=lambda _seconds: None,
         )
+        with pytest.raises(SireneFallbackGeocodingError) as fallback_failure:
+            fallback_service.geocode_pending(second)
+        assert fallback_failure.value.code == "sirene_fallback_geocoder_server_error"
+
         fallback_summary = fallback_service.geocode_pending(second)
         repeated_fallback_summary = fallback_service.geocode_pending(second)
         assert fallback_summary.requested_count == 2
@@ -1095,10 +1120,11 @@ def test_runs_retryable_sirene_pipeline_and_refreshes_existing_prospect(
         assert fallback_summary.usable_count == 1
         assert fallback_summary.to_verify_count == 0
         assert fallback_summary.missing_count == 1
+        assert fallback_summary.skipped_count == 1
         assert repeated_fallback_summary == fallback_summary
         assert sorted(fixture_geocoder.queries) == [
             "12 RUE SAINT PIERRE 40100 DAX",
-            "14 RUE SAINT PIERRE 40100 DAX",
+            "12 RUE SAINT PIERRE 40100 DAX",
         ]
 
         final_resolution = resolution_service.resolve(second)
@@ -1250,7 +1276,9 @@ def test_runs_retryable_sirene_pipeline_and_refreshes_existing_prospect(
                             observation.payload,
                             source.status AS source_status,
                             source.request_count,
-                            source.error_count
+                            source.retry_count,
+                            source.error_count,
+                            source.metadata AS source_metadata
                         FROM candidate_position AS position
                         JOIN source_observation AS observation
                           ON observation.id = position.source_observation_id
@@ -1408,7 +1436,8 @@ def test_runs_retryable_sirene_pipeline_and_refreshes_existing_prospect(
         assert current_attempt[3]["reason"]["code"] == "POSITION_UNRESOLVED"
         assert current_attempt[3]["reason"]["geocoder_usability"] == "MISSING"
         assert (
-            current_attempt[3]["reason"]["geocoder_diagnostic_code"] == "GEOCODER_ADDRESS_NOT_FOUND"
+            current_attempt[3]["reason"]["geocoder_diagnostic_code"]
+            == "GEOCODER_SKIPPED_INSUFFICIENT_ADDRESS"
         )
         assert current_attempt[4]["geographic_classification"] == "OUTSIDE_RADIUS"
         assert current_attempt[4]["distance_meters"] > 100
@@ -1475,14 +1504,24 @@ def test_runs_retryable_sirene_pipeline_and_refreshes_existing_prospect(
         assert missing_fallback["usability"] == "MISSING"
         assert missing_fallback["geographic_classification"] == "LOCATION_UNKNOWN"
         assert missing_fallback["distance_meters"] is None
-        assert missing_fallback["diagnostics"]["code"] == "GEOCODER_ADDRESS_NOT_FOUND"
-        assert missing_fallback["payload"]["outcome"] == "NOT_FOUND"
-        assert missing_fallback["payload"]["request"]["input_address"] == (
-            "14 RUE SAINT PIERRE 40100 DAX"
-        )
+        assert missing_fallback["diagnostics"]["code"] == ("GEOCODER_SKIPPED_INSUFFICIENT_ADDRESS")
+        assert missing_fallback["payload"]["outcome"] == ("SKIPPED_INSUFFICIENT_ADDRESS")
+        assert missing_fallback["payload"]["request"]["input_address"] == ("X 40100 DAX")
+        assert missing_fallback["payload"]["request"]["provider_requested"] is False
         assert all(position["source_status"] == "SUCCEEDED" for position in fallback_positions)
-        assert all(position["request_count"] == 2 for position in fallback_positions)
-        assert all(position["error_count"] == 0 for position in fallback_positions)
+        assert all(position["request_count"] == 1 for position in fallback_positions)
+        assert all(position["retry_count"] == 4 for position in fallback_positions)
+        assert all(position["error_count"] == 1 for position in fallback_positions)
+        assert all(
+            position["source_metadata"]["last_failure"]
+            == {
+                "code": "geocoder_server_error",
+                "final": False,
+                "http_status_code": 503,
+                "attempts": 5,
+            }
+            for position in fallback_positions
+        )
         assert len(projected_prospects) == 4
         assert [prospect["siret"] for prospect in projected_prospects] == [
             "12345678901234",

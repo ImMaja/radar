@@ -28,22 +28,32 @@ from radar.providers.sirene_geolocation import (
 )
 
 
-def write_parquet(path: Path, rows: list[tuple[object, ...]]) -> None:
+def write_parquet(
+    path: Path,
+    rows: list[tuple[object, ...]],
+    *,
+    lowercase_columns: bool = False,
+) -> None:
+    column_names = (
+        "siret, x, y, qualite_xy, epsg, plg_code_commune, "
+        "distance_precision, y_latitude, x_longitude, extra_column"
+        if lowercase_columns
+        else (
+            "SIRET, X, Y, QUALITE_XY, EPSG, PLG_CODE_COMMUNE, "
+            "DISTANCE_PRECISION, y_latitude, x_longitude, EXTRA_COLUMN"
+        )
+    )
     with duckdb.connect(":memory:") as connection:
         connection.execute(
-            """
-            CREATE TABLE geolocation (
-                SIRET VARCHAR,
-                X DOUBLE,
-                Y DOUBLE,
-                QUALITE_XY VARCHAR,
-                EPSG VARCHAR,
-                PLG_CODE_COMMUNE VARCHAR,
-                DISTANCE_PRECISION DOUBLE,
-                y_latitude DOUBLE,
-                x_longitude DOUBLE,
-                EXTRA_COLUMN VARCHAR
-            )
+            f"""
+            CREATE TABLE geolocation AS
+            SELECT *
+            FROM (VALUES
+                (NULL::VARCHAR, NULL::DOUBLE, NULL::DOUBLE, NULL::VARCHAR,
+                 NULL::VARCHAR, NULL::VARCHAR, NULL::DOUBLE, NULL::DOUBLE,
+                 NULL::DOUBLE, NULL::VARCHAR)
+            ) AS fixture({column_names})
+            WHERE FALSE
             """
         )
         connection.executemany(
@@ -116,6 +126,26 @@ def test_scans_only_requested_sirets_in_bounded_batches(tmp_path: Path) -> None:
     assert summary.missing_siret_count == 1
     assert summary.emitted_batch_count == 2
     assert "EXTRA_COLUMN" in summary.columns
+
+
+def test_accepts_the_current_lowercase_official_column_names(tmp_path: Path) -> None:
+    path = tmp_path / "lowercase-geolocation.parquet"
+    write_parquet(
+        path,
+        [row("11111111111111")],
+        lowercase_columns=True,
+    )
+    batches: list[tuple[SireneGeolocationRecord, ...]] = []
+
+    summary = scan_sirene_geolocation_file(
+        path,
+        ("11111111111111",),
+        batches.append,
+    )
+
+    assert summary.matched_siret_count == 1
+    assert batches[0][0].siret == "11111111111111"
+    assert "siret" in summary.columns
 
 
 def test_rejects_schema_drift_before_emitting_rows(tmp_path: Path) -> None:

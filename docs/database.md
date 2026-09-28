@@ -2,7 +2,7 @@
 
 > Statut : conception logique du MVP
 >
-> Dernière mise à jour : 23 septembre 2026
+> Dernière mise à jour : 28 septembre 2026
 >
 > SGBD cible : PostgreSQL avec PostGIS
 
@@ -1016,7 +1016,9 @@ Cette table constitue la file durable PostgreSQL. Elle contient :
 Le worker réserve un travail disponible dans une transaction courte. Le bail
 est libéré avant tout appel réseau et renouvelé pendant le traitement. Un bail
 expiré rend le travail réservable de nouveau, ce qui impose l'idempotence des
-imports.
+imports. Une étape longue ne dépend pas uniquement de son début et de sa fin :
+elle émet un battement après un nombre borné d'éléments persistés. Le repli
+Géoplateforme renouvelle ainsi le bail tous les 100 résultats.
 
 Un index unique partiel sur l'empreinte de demande pour `WAITING`, `RUNNING`
 et `WAITING_RETRY` empêche deux travaux actifs identiques. Un second index
@@ -1093,6 +1095,34 @@ Un connecteur peut combiner plusieurs sources. Cette table associe au cycle :
 
 Elle distingue ainsi la fraîcheur de l'API Sirene, du fichier géographique et
 d'un géocodage de repli.
+
+Pour `GEOPLATFORM_GEOCODER`, `metadata.last_failure` est volontairement borné :
+code contrôlé, caractère final, statut HTTP, nombre de tentatives et délai
+`Retry-After` éventuels. L'adresse, l'URL avec ses paramètres et le corps
+fournisseur n'y figurent jamais. `retry_count` additionne les reprises HTTP
+courtes déjà consommées ; les nouvelles réservations durables restent comptées
+séparément par `collection_attempt`. Lorsque la dernière réservation autorisée
+échoue, cette exécution de source devient `FAILED`, même si la cause fournisseur
+reste classée temporaire ; un cycle terminal ne conserve jamais une exécution
+enfant `RUNNING`.
+
+`request_count` compte uniquement les issues durables obtenues après une
+requête Géoplateforme. Les appels échoués restent décrits par `error_count` et
+leurs reprises courtes par `retry_count`. Une cible rejetée par le contrôle
+local porte l'issue
+`SKIPPED_INSUFFICIENT_ADDRESS`, `request.provider_requested = false`, une
+position de repli `MISSING` et le diagnostic
+`GEOCODER_SKIPPED_INSUFFICIENT_ADDRESS`. Elle entre dans `missing_count` et
+dans le sous-compteur `skipped_count`, mais pas dans `request_count`. Les
+compteurs historiques antérieurs à cette distinction restent relisibles avec
+un `skipped_count` implicite égal à zéro.
+
+La clôture atomique d'un travail `PARTIAL` ou `FAILED` applique aussi ce dernier
+invariant comme filet de sécurité à toute source encore `PLANNED` ou `RUNNING`.
+Elle préserve un diagnostic déjà enregistré, force seulement son drapeau
+`final`, ou ajoute à défaut le code contrôlé
+`collection_finished_before_source`. Une source déjà terminale n'est pas
+réécrite.
 
 ### 15.5 `collection_batch`
 

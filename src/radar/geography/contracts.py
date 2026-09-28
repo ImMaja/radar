@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 
@@ -127,8 +127,39 @@ class AddressOutsideMetropolitanFranceError(ValueError):
     """Raised when results exist but none is in metropolitan France."""
 
 
+GeocodingFailureReason = Literal[
+    "unknown",
+    "network",
+    "rate_limited",
+    "temporary_http",
+    "server_error",
+    "request_rejected",
+]
+
+
 class GeocodingUnavailableError(RuntimeError):
-    """Raised when the external geocoder cannot answer safely."""
+    """Raised with non-sensitive diagnostics when the geocoder cannot answer safely."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: GeocodingFailureReason = "unknown",
+        status_code: int | None = None,
+        retry_after_seconds: int | None = None,
+        attempts: int = 1,
+    ) -> None:
+        if status_code is not None and not 100 <= status_code <= 599:
+            raise ValueError("geocoding failure status code is invalid")
+        if retry_after_seconds is not None and retry_after_seconds < 0:
+            raise ValueError("geocoding failure retry delay cannot be negative")
+        if attempts < 1:
+            raise ValueError("geocoding failure attempt count must be positive")
+        self.reason = reason
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+        self.attempts = attempts
+        super().__init__(message)
 
 
 class GeocodingContractError(RuntimeError):
