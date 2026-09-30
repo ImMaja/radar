@@ -552,3 +552,19 @@ def test_retries_short_temporary_failures_but_not_authentication_or_long_waits()
         client_for(long_wait_handler).service_information()
     assert captured.value.retry_after_seconds == 120
     assert long_wait_calls == 1
+
+    oversized_wait_calls = 0
+
+    def oversized_wait_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal oversized_wait_calls
+        oversized_wait_calls += 1
+        return httpx.Response(
+            429,
+            headers={"Retry-After": "9" * 10_000},
+            request=request,
+        )
+
+    with pytest.raises(SireneTemporaryError) as oversized:
+        client_for(oversized_wait_handler).service_information()
+    assert oversized.value.retry_after_seconds == 86_400
+    assert oversized_wait_calls == 1

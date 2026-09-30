@@ -35,6 +35,7 @@ _SIRET = re.compile(r"^\d{14}$")
 MIN_REQUEST_INTERVAL_SECONDS = 2.0
 MAX_HTTP_ATTEMPTS = 4
 MAX_IN_PROCESS_RETRY_SECONDS = 60
+MAX_RECORDED_RETRY_AFTER_SECONDS = 86_400
 
 SIRET_FIELDS: tuple[str, ...] = (
     "siret",
@@ -102,6 +103,16 @@ class SireneContractError(SireneAdapterError):
 
 class _SireneModel(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+
+def _parse_retry_after(value: str | None) -> int | None:
+    """Parse bounded delta-seconds without trusting provider-sized integers."""
+
+    if value is None or not value.isdigit():
+        return None
+    if len(value) > 5:
+        return MAX_RECORDED_RETRY_AFTER_SECONDS
+    return min(int(value), MAX_RECORDED_RETRY_AFTER_SECONDS)
 
 
 class _Header(_SireneModel):
@@ -820,10 +831,7 @@ class SireneClient:
                         "the Sirene API rejected its configured subscription"
                     )
                 if response.status_code == 429 or response.status_code >= 500:
-                    retry_after = response.headers.get("Retry-After")
-                    retry_seconds = (
-                        int(retry_after) if retry_after and retry_after.isdigit() else None
-                    )
+                    retry_seconds = _parse_retry_after(response.headers.get("Retry-After"))
                     last_temporary_error = SireneTemporaryError(
                         f"the Sirene API returned HTTP {response.status_code}",
                         retry_after_seconds=retry_seconds,

@@ -41,6 +41,13 @@ class _Reporter:
         self._worker_id = worker_id
         self._clock = clock
         self._lease_duration = lease_duration
+        self._observations_preserved = reservation.observations_preserved
+
+    @property
+    def observations_preserved(self) -> int:
+        """Return the greatest observation count durably acknowledged by the repository."""
+
+        return self._observations_preserved
 
     def update(
         self,
@@ -51,14 +58,25 @@ class _Reporter:
 
         now = self._clock()
         checkpoint_copy = dict(checkpoint) if checkpoint is not None else None
+        observations_preserved = max(
+            self._observations_preserved,
+            progress.observations,
+        )
+        durable_progress = CollectionProgress(
+            progress.stage,
+            progress.processed,
+            progress.total,
+            observations_preserved,
+        )
         self._repository.heartbeat(
             self._reservation,
             self._worker_id,
-            progress,
+            durable_progress,
             checkpoint_copy,
             now,
             now + self._lease_duration,
         )
+        self._observations_preserved = observations_preserved
 
 
 class CollectionWorker:
@@ -104,12 +122,16 @@ class CollectionWorker:
         try:
             outcome = self._executors[reservation.connector].collect(reservation, reporter)
         except RetryableCollectionError as error:
-            self._handle_retryable(reservation, error)
+            self._handle_retryable(
+                reservation,
+                error,
+                reporter.observations_preserved,
+            )
         except PermanentCollectionError as error:
             self._finish_failure(
                 reservation,
                 error.error,
-                error.observations_preserved,
+                max(error.observations_preserved, reporter.observations_preserved),
             )
         except Exception as error:
             logger.error(
@@ -127,7 +149,7 @@ class CollectionWorker:
                     "Une erreur interne a interrompu la collecte.",
                     transient=False,
                 ),
-                0,
+                reporter.observations_preserved,
             )
         else:
             self._finish_outcome(reservation, outcome)
@@ -137,6 +159,7 @@ class CollectionWorker:
         self,
         reservation: ReservedCollection,
         failure: RetryableCollectionError,
+        observations_preserved: int,
     ) -> None:
         now = self._clock()
         if reservation.attempt_number < reservation.max_attempts:
@@ -152,7 +175,7 @@ class CollectionWorker:
         self._finish_failure(
             reservation,
             failure.error,
-            failure.observations_preserved,
+            max(failure.observations_preserved, observations_preserved),
             now=now,
         )
 

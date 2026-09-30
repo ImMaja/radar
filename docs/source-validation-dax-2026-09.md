@@ -12,6 +12,10 @@
 >
 > Diagnostic ciblé GeoPlateforme : 28 septembre 2026
 >
+> Premier cycle opérationnel réussi : 28 septembre 2026
+>
+> Relance réelle idempotente : 28 septembre 2026
+>
 > Périmètre : cercle de 50 km à vol d'oiseau autour de la mairie de Dax
 
 ## 1. Objet et conclusion
@@ -304,6 +308,97 @@ reste tracée avec l'issue `SKIPPED_INSUFFICIENT_ADDRESS`, une position
 décision est volontairement plus étroite qu'une conversion générale des HTTP
 400 : un tel statut reçu pour une adresse jugée suffisante reste terminal et
 signale une éventuelle rupture du contrat fournisseur.
+
+### 5.1.2 Second cycle opérationnel
+
+Le cycle suivant a terminé sans erreur les deux premières sources :
+
+- 161 509 établissements Sirene annoncés, reçus et uniques ;
+- 161 504 candidats importables et 5 fermetures concurrentes rejetées ;
+- 160 426 SIRET joints au fichier de septembre et 1 078 absences ;
+- 14 194 cibles nécessitant une décision de repli.
+
+Le repli a persisté 12 594 décisions avant de s'arrêter proprement en
+`PARTIAL` sur un nouveau HTTP 400 :
+
+- 9 194 réponses correspondantes, dont 5 555 utilisables et 3 639 à vérifier ;
+- 25 absences fournisseur ;
+- 3 375 adresses insuffisantes écartées localement ;
+- 9 219 requêtes fournisseur réussies, sans reprise ni autre erreur ;
+- 1 600 cibles encore sans décision.
+
+La nouvelle adresse rejetée possède un code postal, une commune et un libellé
+de voie de longueur normale. Elle ne contient aucun contrôle, caractère
+multi-octet ou ponctuation d'URL. Son libellé est toutefois un unique token
+entièrement enveloppé de deux guillemets doubles. Sur les 14 194 cibles, 15
+libellés contiennent deux guillemets équilibrés : 3 enveloppent tout le
+libellé, tandis que 12 les utilisent à l'intérieur ou seulement autour d'une
+partie du texte.
+
+Sans retransmettre cette nouvelle adresse réelle, des requêtes synthétiques
+ont reproduit le contrat du fournisseur : un token englobé de guillemets au
+début de `q` reçoit un HTTP 400 ; la même forme sans cette enveloppe, ainsi que
+les deux motifs de guillemets internes observés, reçoivent un HTTP 200. Radar
+retire donc exactement une paire englobante après normalisation des espaces et
+conserve tous les autres guillemets. L'adresse Sirene brute reste intacte dans
+son observation ; seule la requête Géoplateforme dérivée porte la
+normalisation. L'adaptateur correspondant est versionné
+`geoplatform-address-v3`.
+
+### 5.1.3 Premier cycle opérationnel réussi
+
+Le cycle suivant, utilisant le contrat `geoplatform-address-v3`, s'est terminé
+`SUCCEEDED` en une tentative le 28 septembre 2026 :
+
+- 161 509 établissements annoncés, reçus et uniques ;
+- 161 504 candidats importables et 5 fermetures concurrentes rejetées ;
+- 160 426 SIRET joints au Parquet et 1 078 absences normales ;
+- 14 194 décisions de repli réconciliées ;
+- 10 360 réponses correspondantes, dont 6 252 utilisables et 4 108 à
+  vérifier ;
+- 3 834 positions manquantes, dont 3 806 adresses insuffisantes écartées
+  localement et 28 absences renvoyées par le fournisseur ;
+- 10 388 requêtes fournisseur, sans reprise ni erreur.
+
+La résolution finale classe 139 045 candidats dans le cercle exact, 14 517
+hors du cercle et 7 942 sans position décisionnelle. Elle crée donc 146 987
+prospects : les 139 045 premiers avec une distance et les 7 942 derniers dans
+« Localisation à vérifier ». Les agrégats de base confirment 146 987
+établissements distincts, aucun groupe de SIRET dupliqué et autant de liens
+source que de fiches. La couverture Sirene de 50 km est publiée uniquement à
+la fin de cette réconciliation complète.
+
+Ce résultat valide le chemin nominal complet et les correctifs issus des deux
+cycles partiels. La collecte suivante mesure l'idempotence réelle de la mise à
+jour sur ce catalogue matérialisé, distincte de celle déjà couverte par les
+tests PostgreSQL.
+
+### 5.1.4 Relance réelle idempotente
+
+Une relance immédiate sur le catalogue matérialisé s'est terminée `SUCCEEDED`
+en une tentative, du 28 septembre 2026 à `20:20:12 UTC` au 28 septembre 2026
+à `21:07:49 UTC`. Les volumes d'entrée sont restés stables :
+
+- 161 509 établissements annoncés, reçus et uniques ;
+- 161 504 candidats importables et 5 fermetures concurrentes rejetées ;
+- 160 426 SIRET joints au Parquet et 1 078 absences ;
+- 14 194 décisions de repli, 10 388 appels Géoplateforme et aucune erreur ni
+  reprise ;
+- 10 360 correspondances, dont 6 253 utilisables et 4 107 à vérifier ;
+- 3 834 positions manquantes, dont 3 806 requêtes écartées localement.
+
+La source étant vivante, l'état métier n'est pas supposé être strictement
+figé entre deux lectures. La seconde résolution compte 14 519 candidats hors
+rayon et 7 941 localisations indéterminées. Elle réutilise les 146 987 liens
+source du premier succès, laisse 146 984 projections inchangées, confirme par
+une requête ciblée l'activité des trois SIRET absents de la nouvelle sélection
+et crée une fiche pour un nouveau SIRET.
+
+Après la relance, la base contient 146 988 prospects, 146 988 établissements
+distincts, 146 988 SIRET non nuls et distincts et 146 988 liens Sirene
+distincts. Aucun groupe de SIRET dupliqué n'existe. La nouvelle couverture de
+50 km référence le second cycle réussi. Ces contrôles valident l'idempotence
+réelle attendue pour la sortie du jalon 6.
 
 ### 5.2 Cohérence et qualité
 

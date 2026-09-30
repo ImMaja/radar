@@ -20,6 +20,7 @@ from radar.prospects.fallback_geocoding import (
     SireneFallbackGeocodingSummary,
     SireneFallbackGeocodingTarget,
     StagedSireneFallbackGeocoding,
+    normalize_geocoding_query_part,
 )
 
 
@@ -805,8 +806,8 @@ class SqlAlchemySireneFallbackGeocodingRepository:
             .one()
         )
 
-    @classmethod
-    def _target_from_row(cls, row: RowMapping) -> SireneFallbackGeocodingTarget:
+    @staticmethod
+    def _target_from_row(row: RowMapping) -> SireneFallbackGeocodingTarget:
         collection_item_id = row["collection_item_id"]
         external_identity_id = row["external_identity_id"]
         municipality_code = row["municipality_code"]
@@ -819,26 +820,24 @@ class SqlAlchemySireneFallbackGeocodingRepository:
                 "fallback geocoding target has incomplete identity or municipality data",
                 transient=False,
             )
-        parts = [
-            row["street_number"],
-            row["repetition_index"],
-            row["street_type"],
-            row["street_label"],
-            row["postcode"],
-            row["municipality_label"],
-        ]
-        address = " ".join(
-            " ".join(part.split()) for part in parts if isinstance(part, str) and part.strip()
+        parts = tuple(
+            normalize_geocoding_query_part(row[key])
+            for key in (
+                "street_number",
+                "repetition_index",
+                "street_type",
+                "street_label",
+                "postcode",
+                "municipality_label",
+            )
         )
+        address = " ".join(part for part in parts if part)
         if not address or len(address) > 500:
             raise SireneFallbackGeocodingError(
                 "fallback geocoding target has no bounded public address",
                 transient=False,
             )
-        street_type = cls._normalized_part(row["street_type"])
-        street_label = cls._normalized_part(row["street_label"])
-        postcode = cls._normalized_part(row["postcode"])
-        municipality_label = cls._normalized_part(row["municipality_label"])
+        _, _, street_type, street_label, postcode, municipality_label = parts
         query_is_sufficient = bool(
             postcode
             and municipality_label
@@ -873,10 +872,6 @@ class SqlAlchemySireneFallbackGeocodingRepository:
             missing_count=cast(int, row["missing_count"]),
             skipped_count=cast(int, row["skipped_count"]),
         )
-
-    @staticmethod
-    def _normalized_part(value: object) -> str:
-        return " ".join(value.split()) if isinstance(value, str) else ""
 
     @staticmethod
     def _optional_counter(counters: dict[object, object], key: str) -> int:

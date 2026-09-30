@@ -23,7 +23,7 @@ from radar.geography.contracts import (
 )
 
 GEOPLATFORM_DATA_SOURCE_CODE = "GEOPLATFORM_GEOCODER"
-GEOPLATFORM_ADAPTER_VERSION = "geoplatform-address-v2"
+GEOPLATFORM_ADAPTER_VERSION = "geoplatform-address-v3"
 GEOPLATFORM_SCHEMA_VERSION = "sirene-fallback-geocoding-v2"
 GEOPLATFORM_POSITION_RULE_VERSION = "sirene-geoplatform-position-v2"
 MIN_REQUEST_INTERVAL_SECONDS = 0.05
@@ -221,6 +221,15 @@ def utc_now() -> datetime:
     """Return an aware UTC instant."""
 
     return datetime.now(UTC)
+
+
+def normalize_geocoding_query_part(value: object) -> str:
+    """Normalize one public address component without changing its source value."""
+
+    normalized = " ".join(value.split()) if isinstance(value, str) else ""
+    if len(normalized) >= 2 and normalized.startswith('"') and normalized.endswith('"'):
+        return normalized[1:-1].strip()
+    return normalized
 
 
 def normalize_fallback_geocoding(

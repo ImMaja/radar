@@ -1,6 +1,6 @@
 # Radar — Roadmap
 
-> Statut : jalons 0 à 5 terminés ; jalon 6 en cours
+> Statut : jalons 0 à 6 terminés
 >
 > Dernière mise à jour : 28 septembre 2026
 >
@@ -219,7 +219,7 @@ jalons 6 et 7, afin de ne pas créer de travaux impossibles à exécuter.
 
 ### Jalon 6 — Prospects Sirene de bout en bout
 
-**État : en cours depuis le 20 septembre 2026.**
+**État : terminé le 28 septembre 2026.**
 
 **But :** livrer la première boucle métier réellement utilisable.
 
@@ -503,12 +503,44 @@ envoyer à Géoplateforme. Un test PostgreSQL vérifie l'absence d'appel et
 d'incrément du compteur fournisseur. Les HTTP 400 sur une adresse suffisante
 restent terminaux afin de révéler une éventuelle rupture générale du contrat.
 
+Le vingt-et-unième incrément exploite le second cycle réel. Sirene y a reçu
+161 509 établissements, dont 161 504 importables, et le fichier a joint
+160 426 SIRET. Le repli a persisté 12 594 décisions — 9 194 correspondances,
+25 absences et 3 375 adresses localement insuffisantes — avant qu'un libellé de
+voie entièrement enveloppé de guillemets doubles ne déclenche un HTTP 400. Des
+requêtes synthétiques reproduisent le refus lorsque ce token ouvre `q` et
+confirment que les guillemets internes rencontrés dans les autres données sont
+acceptés. La requête dérivée retire désormais seulement une paire englobante,
+sans modifier la valeur Sirene conservée. Le contrat adaptateur passe en `v3`
+et les tests unitaires ainsi que PostgreSQL couvrent cette normalisation.
+
+Le vingt-deuxième incrément valide ce contrat `v3` sur un troisième cycle
+réel, terminé `SUCCEEDED` en une tentative. Les 161 509 établissements reçus
+et uniques comprennent 161 504 candidats importables ; le Parquet en joint
+160 426 et le repli prend les 14 194 décisions attendues avec 10 388 requêtes,
+zéro reprise et zéro erreur fournisseur. La projection crée 139 045 prospects
+dans le cercle et conserve 7 942 prospects dans « Localisation à vérifier » ;
+14 517 établissements hors rayon restent seulement comptabilisés. Les
+146 987 fiches correspondent à autant d'établissements et de SIRET distincts.
+La couverture de 50 km n'est publiée qu'après cette réconciliation complète.
+
+Le vingt-troisième incrément répète immédiatement cette collecte sur le
+catalogue matérialisé. Le cycle termine de nouveau `SUCCEEDED` en une tentative,
+avec les mêmes 161 509 établissements reçus, 160 426 jointures Parquet,
+14 194 décisions de repli et 10 388 appels Géoplateforme sans erreur. Les
+146 987 liens source préexistants gardent leur identité ; 146 984 candidats
+projetés sont inchangés, trois absents de la sélection sont confirmés actifs
+par le contrôle ciblé, et un seul nouveau SIRET crée une fiche. Le catalogue
+final contient 146 988 prospects, établissements, SIRET et liens Sirene
+distincts, sans groupe dupliqué. Une seconde couverture de 50 km est publiée
+après succès complet.
+
 Le score, son filtre et son tri restent volontairement au jalon 8 et ne
-bloquent pas la sortie de ce jalon. Le vrai fichier et sa provenance sont
-maintenant validés ; il reste à terminer le repli fournisseur, obtenir un cycle
-opérationnel `SUCCEEDED` puis vérifier sa relance idempotente avant de déclarer
-le jalon terminé. La découverte et le téléchargement automatiques du prochain
-millésime sont reportés : ils ne sont pas nécessaires à cet essai manuel.
+bloquent pas la sortie de ce jalon. Le fichier réel, sa provenance, le cycle
+opérationnel complet et sa relance idempotente sont maintenant validés. La
+découverte et le téléchargement automatiques du prochain millésime sont
+reportés au jalon 10 : ils ne sont pas nécessaires à la boucle métier du
+jalon 6.
 
 ### Jalon 7 — Événements DATAtourisme de bout en bout
 

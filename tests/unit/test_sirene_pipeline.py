@@ -150,8 +150,9 @@ class FixtureProjector:
 
 
 class FixtureStatusReconciler:
-    def __init__(self, calls: list[str]) -> None:
+    def __init__(self, calls: list[str], *, retryable_failure: bool = False) -> None:
         self._calls = calls
+        self._retryable_failure = retryable_failure
 
     def reconcile(
         self,
@@ -159,6 +160,12 @@ class FixtureStatusReconciler:
         _reporter: ProgressReporter,
     ) -> SireneKnownStatusSummary:
         self._calls.append("statuses")
+        if self._retryable_failure:
+            raise RetryableCollectionError(
+                "sirene_known_status_temporary_error",
+                "Sirene est momentanément indisponible.",
+                observations_preserved=1,
+            )
         return SireneKnownStatusSummary(1, 0, 0, 0, 1, 0)
 
 
@@ -176,6 +183,7 @@ def executor(
     calls: list[str],
     *,
     transient_geocoder_failure: bool = False,
+    transient_status_failure: bool = False,
 ) -> SireneProspectCollectionExecutor:
     return SireneProspectCollectionExecutor(
         FixtureEnumerator(calls),
@@ -185,7 +193,7 @@ def executor(
         FixturePositionResolver(calls),
         FixtureFallbackGeocoder(calls, transient_failure=transient_geocoder_failure),
         FixtureProjector(calls),
-        FixtureStatusReconciler(calls),
+        FixtureStatusReconciler(calls, retryable_failure=transient_status_failure),
     )
 
 
@@ -246,3 +254,17 @@ def test_maps_temporary_fallback_failure_to_a_retryable_collection() -> None:
     assert captured.value.error.code == "sirene_fallback_geocoder_server_error"
     assert captured.value.observations_preserved == 2
     assert calls == ["enumerate", "geolocation", "resolve-1", "geocode"]
+
+
+def test_preserves_all_importable_observations_when_known_status_lookup_fails() -> None:
+    calls: list[str] = []
+
+    with pytest.raises(RetryableCollectionError) as captured:
+        executor(calls, transient_status_failure=True).collect(
+            reservation(),
+            FixtureReporter(),
+        )
+
+    assert captured.value.error.code == "sirene_known_status_temporary_error"
+    assert captured.value.observations_preserved == 2
+    assert calls[-2:] == ["project", "statuses"]

@@ -243,6 +243,33 @@ describe("authentication interface", () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
+  it("returns to login when the session expires during a settings action", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(session))
+      .mockResolvedValueOnce(response(geography))
+      .mockResolvedValueOnce(response(collections))
+      .mockResolvedValueOnce(
+        response(
+          {
+            code: "authentication_required",
+            message: "Une connexion valide est nécessaire.",
+          },
+          401,
+        ),
+      );
+    render(<App />);
+    await screen.findByRole("heading", { name: "Adresse de référence" });
+
+    fireEvent.change(screen.getByLabelText("Adresse"), {
+      target: { value: "12 rue Saint-Pierre 40100 Dax" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Vérifier l’adresse" }));
+
+    expect(await screen.findByRole("heading", { name: "Connexion" })).toBeInTheDocument();
+    expect(screen.queryByText("Bonjour Radar")).not.toBeInTheDocument();
+    expect(screen.queryByText("Une connexion valide est nécessaire.")).not.toBeInTheDocument();
+  });
+
   it("queues a manual collection and displays its durable waiting state", async () => {
     // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API.
     document.cookie = "radar_csrf=csrf-value; Path=/";

@@ -57,12 +57,23 @@ export function App() {
   const [activeView, setActiveView] = useState<"prospects" | "settings">("settings");
   const openSettings = useCallback(() => setActiveView("settings"), []);
   const handleAuthenticationRequired = useCallback(() => {
+    setMessage(null);
     setState({ phase: "anonymous" });
     setGeography(null);
     setCollections(null);
     setCandidate(null);
     setActiveView("settings");
   }, []);
+  const handleRequestError = useCallback(
+    (error: unknown) => {
+      if (error instanceof ApiError && error.status === 401) {
+        handleAuthenticationRequired();
+        return;
+      }
+      setMessage(errorMessage(error));
+    },
+    [handleAuthenticationRequired],
+  );
 
   useEffect(() => {
     let active = true;
@@ -110,12 +121,10 @@ export function App() {
       return;
     }
     const interval = window.setInterval(() => {
-      getCollectionDashboard()
-        .then(setCollections)
-        .catch((error: unknown) => setMessage(errorMessage(error)));
+      getCollectionDashboard().then(setCollections).catch(handleRequestError);
     }, 5000);
     return () => window.clearInterval(interval);
-  }, [collections, state.phase]);
+  }, [collections, handleRequestError, state.phase]);
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -152,10 +161,7 @@ export function App() {
       setState({ phase: "authenticated", session });
       setMessage("Le mot de passe a été remplacé. Les autres sessions sont déconnectées.");
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        setState({ phase: "anonymous" });
-      }
-      setMessage(errorMessage(error));
+      handleRequestError(error);
     }
   }
 
@@ -169,11 +175,7 @@ export function App() {
       setCandidate(null);
       setActiveView("settings");
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        setState({ phase: "anonymous" });
-      } else {
-        setMessage(errorMessage(error));
-      }
+      handleRequestError(error);
     }
   }
 
@@ -186,7 +188,7 @@ export function App() {
     try {
       setCandidate(await geocodeReferenceAddress(String(form.get("address") ?? "")));
     } catch (error) {
-      setMessage(errorMessage(error));
+      handleRequestError(error);
     } finally {
       setGeographyBusy(false);
     }
@@ -203,7 +205,7 @@ export function App() {
       setCandidate(null);
       setMessage("L'adresse de référence est confirmée. Aucune collecte n'a été lancée.");
     } catch (error) {
-      setMessage(errorMessage(error));
+      handleRequestError(error);
     } finally {
       setGeographyBusy(false);
     }
@@ -225,7 +227,7 @@ export function App() {
       setCollections(await getCollectionDashboard());
       setMessage("Les rayons ont été enregistrés sans nouvelle collecte.");
     } catch (error) {
-      setMessage(errorMessage(error));
+      handleRequestError(error);
     } finally {
       setGeographyBusy(false);
     }
@@ -243,7 +245,7 @@ export function App() {
           : `Une collecte ${connector} identique est déjà active.`,
       );
     } catch (error) {
-      setMessage(errorMessage(error));
+      handleRequestError(error);
     } finally {
       setGeographyBusy(false);
     }

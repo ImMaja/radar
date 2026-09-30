@@ -81,6 +81,22 @@ conserve comme non localisables et ne les compte pas comme requêtes fournisseur
 Les autres diagnostics distinguent réseau, limitation, erreur serveur et
 requête rejetée, sans recopier l'adresse ni le corps reçu.
 
+Un second cycle réel a ensuite persisté 12 594 décisions de repli avant de
+rencontrer un autre HTTP 400. Le libellé Sirene concerné était entièrement
+enveloppé de guillemets doubles, forme que le moteur de recherche refuse
+lorsqu'elle ouvre la requête. Radar conserve désormais la valeur source mais
+retire cette seule paire englobante de la requête Géoplateforme.
+
+Le cycle réel suivant a validé ce correctif de bout en bout : les 161 509
+établissements reçus ont été réconciliés, les 14 194 décisions de repli ont
+été terminées sans erreur et le worker a publié une couverture de 50 km.
+Radar a créé 146 987 prospects, dont 7 942 à localisation à vérifier, sans
+dupliquer de SIRET. Une relance réelle a ensuite réutilisé les 146 987
+identités existantes, conservé trois absences après contrôle explicite de leur
+activité et créé une seule fiche pour un nouveau SIRET. Le catalogue final
+contient donc 146 988 prospects pour autant de SIRET distincts : l'idempotence
+du connecteur est validée et le jalon 6 est terminé.
+
 Le MVP est prévu pour un seul utilisateur et un seul food truck. Il sera
 accessible sur Internet derrière une authentification, sans exposer
 PostgreSQL publiquement.

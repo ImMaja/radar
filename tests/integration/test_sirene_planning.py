@@ -870,6 +870,7 @@ def test_runs_retryable_sirene_pipeline_and_refreshes_existing_prospect(
     candidate_without_coordinates = staging_candidate(
         siret="98765432109876",
         siren="987654321",
+        street_label='"SAINT PIERRE"',
     )
     candidate_with_file_fallback = staging_candidate(
         siret="55555555555555",

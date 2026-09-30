@@ -1117,6 +1117,12 @@ dans le sous-compteur `skipped_count`, mais pas dans `request_count`. Les
 compteurs historiques antérieurs à cette distinction restent relisibles avec
 un `skipped_count` implicite égal à zéro.
 
+L'observation Sirene conserve l'adresse source à l'identique. L'observation de
+repli conserve séparément la requête effectivement envoyée : depuis
+`geoplatform-address-v3`, ses composants ont leurs espaces normalisés et une
+paire de guillemets doubles englobante retirée. Cette séparation rend la
+transformation vérifiable sans altérer la provenance.
+
 La clôture atomique d'un travail `PARTIAL` ou `FAILED` applique aussi ce dernier
 invariant comme filet de sécurité à toute source encore `PLANNED` ou `RUNNING`.
 Elle préserve un diagnostic déjà enregistré, force seulement son drapeau

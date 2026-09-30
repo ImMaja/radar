@@ -136,6 +136,7 @@ class ReservedCollection:
     latitude: float
     collection_radius_meters: int
     last_safe_checkpoint: JsonObject | None
+    observations_preserved: int = 0
 
 
 @dataclass(frozen=True)

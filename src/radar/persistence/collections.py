@@ -530,6 +530,7 @@ class SqlAlchemyCollectionRepository:
                     if row["last_safe_checkpoint"] is not None
                     else None
                 )
+                progress = _progress(row["progress"])
                 return ReservedCollection(
                     job_id=cast(UUID, row["id"]),
                     cycle_id=cast(UUID, row["cycle_id"]),
@@ -541,6 +542,7 @@ class SqlAlchemyCollectionRepository:
                     latitude=cast(float, row["latitude"]),
                     collection_radius_meters=cast(int, row["collection_radius_meters"]),
                     last_safe_checkpoint=checkpoint,
+                    observations_preserved=progress.observations,
                 )
 
     def heartbeat(

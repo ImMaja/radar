@@ -512,6 +512,15 @@ adresses continuent d'être envoyées normalement. En particulier, un HTTP 400
 sur une requête localement suffisante reste une erreur terminale plutôt qu'une
 absence silencieuse.
 
+Le second cycle opérationnel a isolé une autre forme déterministe : un libellé
+de voie de longueur normale, entièrement enveloppé de guillemets doubles et
+placé au début de `q`, produit un HTTP 400. Des requêtes synthétiques ont
+confirmé que cette enveloppe complète est refusée, alors que des guillemets
+équilibrés internes sont acceptés. L'adaptateur `geoplatform-address-v3`
+normalise donc chaque composant par réduction des espaces et retire seulement
+une paire de guillemets qui l'enveloppe entièrement. La donnée Sirene source
+n'est jamais réécrite ; seule la requête dérivée et tracée est normalisée.
+
 Radar conserve le score renvoyé, mais ne fixe aucun seuil numérique non validé.
 Un résultat devient automatiquement utilisable seulement si son type est
 `housenumber` ou `street`, si son code commune égale celui de l'adresse Sirene

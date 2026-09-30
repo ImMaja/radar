@@ -614,6 +614,10 @@ conservée avec une position `MISSING` et un diagnostic local distinct ; elle ne
 consomme pas une requête Géoplateforme. Cette règle ne transforme pas tous les
 HTTP 400 en absences normales : un tel refus sur une adresse jugée suffisante
 reste terminal, car il peut signaler une rupture globale du contrat externe.
+La construction de la requête réduit les espaces et retire une paire de
+guillemets doubles uniquement lorsqu'elle enveloppe entièrement un composant.
+La valeur Sirene originale reste inchangée dans son observation ; les
+guillemets internes, acceptés par le fournisseur, sont conservés.
 
 Un point de reprise n'est utilisé que si le fournisseur garantit sa validité :
 

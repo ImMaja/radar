@@ -128,6 +128,34 @@ class FailedExecutor:
         raise PermanentCollectionError("invalid_contract", "Le contrat source est invalide.")
 
 
+class RetryThenUnexpectedExecutor:
+    def __init__(self, repository: SqlAlchemyCollectionRepository) -> None:
+        self._repository = repository
+        self.calls = 0
+
+    def collect(
+        self,
+        reservation: ReservedCollection,
+        reporter: ProgressReporter,
+    ) -> CollectionOutcome:
+        self.calls += 1
+        if self.calls == 1:
+            reporter.update(
+                CollectionProgress("staged", processed=4, total=10, observations=4),
+                {"page": 1},
+            )
+            raise RetryableCollectionError(
+                "provider_unavailable",
+                "La source est momentanément indisponible.",
+            )
+        assert reservation.observations_preserved == 4
+        reporter.update(CollectionProgress("restarting", processed=0, total=10, observations=0))
+        active_job = self._repository.dashboard().connectors[0].active_job
+        assert active_job is not None
+        assert active_job.progress.observations == 4
+        raise RuntimeError("late unexpected failure")
+
+
 def test_fake_jobs_succeed_retry_fail_and_never_publish_partial_coverage(
     integration_database_url: str,
 ) -> None:
@@ -228,6 +256,58 @@ def test_fake_jobs_succeed_retry_fail_and_never_publish_partial_coverage(
                 )
             ).scalars()
             assert set(coverage_results) == {"SUCCEEDED"}
+    finally:
+        engine.dispose()
+
+
+def test_unexpected_failure_uses_progress_preserved_by_a_previous_attempt(
+    integration_database_url: str,
+) -> None:
+    confirm_position(integration_database_url)
+    engine = create_engine(integration_database_url)
+    repository = SqlAlchemyCollectionRepository(engine)
+    clock = MutableClock(NOW + timedelta(minutes=1))
+    executor = RetryThenUnexpectedExecutor(repository)
+    try:
+        queued = repository.enqueue("SIRENE", "MANUAL", SPECIFICATION, NOW)
+        worker = CollectionWorker(
+            repository, {"SIRENE": executor}, "worker-late-error", clock=clock
+        )
+
+        assert worker.run_once() is True
+        waiting_retry = repository.dashboard().connectors[0].active_job
+        assert waiting_retry is not None
+        assert waiting_retry.id == queued.job.id
+        assert waiting_retry.state == "WAITING_RETRY"
+        assert waiting_retry.progress.observations == 4
+
+        clock.now += timedelta(minutes=31)
+        assert worker.run_once() is True
+        failed = repository.dashboard().connectors[0].latest_job
+        assert failed is not None
+        assert failed.id == queued.job.id
+        assert failed.state == "PARTIAL"
+        assert failed.progress.observations == 4
+        assert failed.last_error is not None
+        assert failed.last_error.code == "unexpected_worker_error"
+
+        with engine.connect() as connection:
+            row = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT result, counters
+                        FROM collection_cycle
+                        WHERE id = :cycle_id
+                        """
+                    ),
+                    {"cycle_id": queued.job.cycle_id},
+                )
+                .mappings()
+                .one()
+            )
+        assert row["result"] == "PARTIAL"
+        assert row["counters"]["observations"] == 4
     finally:
         engine.dispose()
 

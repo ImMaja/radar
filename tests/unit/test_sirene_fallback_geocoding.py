@@ -21,6 +21,7 @@ from radar.prospects.fallback_geocoding import (
     SireneFallbackGeocodingTarget,
     StagedSireneFallbackGeocoding,
     normalize_fallback_geocoding,
+    normalize_geocoding_query_part,
 )
 
 NOW = datetime(2026, 9, 21, 14, tzinfo=UTC)
@@ -74,6 +75,23 @@ def result() -> GeocodedAddress:
         provider_name="Géoplateforme",
         provider_url="https://data.geopf.fr/geocodage/search",
     )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (None, ""),
+        ("  RUE   SAINT PIERRE ", "RUE SAINT PIERRE"),
+        ('"ABCDEFGHIJK"', "ABCDEFGHIJK"),
+        ('LIEU "DIT"', 'LIEU "DIT"'),
+        ('""', ""),
+    ],
+)
+def test_normalizes_query_parts_without_changing_balanced_internal_quotes(
+    source: object,
+    expected: str,
+) -> None:
+    assert normalize_geocoding_query_part(source) == expected
 
 
 class FixtureBackend:

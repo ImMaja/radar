@@ -203,6 +203,18 @@ class SireneProspectCollectionExecutor:
                 "sirene_projection",
             )
             statuses = self._status_reconciler.reconcile(reservation, reporter)
+        except RetryableCollectionError as error:
+            raise RetryableCollectionError(
+                error.error.code,
+                error.error.message,
+                observations_preserved=max(error.observations_preserved, preserved),
+            ) from error
+        except PermanentCollectionError as error:
+            raise PermanentCollectionError(
+                error.error.code,
+                error.error.message,
+                observations_preserved=max(error.observations_preserved, preserved),
+            ) from error
         except SireneGeolocationImportError as error:
             raise PermanentCollectionError(
                 "sirene_geolocation_import_failed",
