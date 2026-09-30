@@ -1,8 +1,8 @@
 # Radar — Roadmap
 
-> Statut : jalons 0 à 6 terminés
+> Statut : jalons 0 à 6 terminés, jalon 7 en cours
 >
-> Dernière mise à jour : 28 septembre 2026
+> Dernière mise à jour : 30 septembre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -544,6 +544,8 @@ jalon 6.
 
 ### Jalon 7 — Événements DATAtourisme de bout en bout
 
+**État : en cours depuis le 30 septembre 2026.**
+
 **But :** livrer la deuxième famille d'opportunités.
 
 Travaux :
@@ -574,6 +576,28 @@ Interface minimale :
 
 Critère de sortie : des événements simples, sur plusieurs jours et récurrents
 sont importés puis mis à jour sans perdre leurs périodes.
+
+Avancement : le premier incrément isole l'API DATAtourisme v1 derrière un
+adaptateur de lecture typé. Il envoie la clé uniquement dans `X-API-Key`,
+demande les champs utiles en français sans aucun filtre temporel et limite le
+débit à cinq requêtes par seconde dans un seul flux. La taille de page est
+alignée sur le maximum courant de 100 éléments ; la réponse effective est
+contrôlée au lieu de faire confiance à la valeur demandée. Chaque lien `next`
+est considéré comme non fiable : seuls HTTPS, l'hôte officiel, le port attendu
+et `/v1/entertainmentAndEvent` sont acceptés, `api_key` est retiré et seul le
+chemin avec sa requête assainie est reconstruit. Le lien brut n'est pas exposé,
+seulement son empreinte.
+
+Les objets sont normalisés dans des contrats indépendants du fournisseur pour
+les lieux, adresses, descriptions, périodes, contacts et rôles de provenance.
+Producteur, diffuseur et propriétaire restent explicitement des éléments de
+provenance et ne deviennent jamais un organisateur. L'adaptateur rapproche à
+la fin total annoncé, objets reçus, UUID uniques, pages et dernière page, et
+refuse doublons, boucles, redirections ou dérives de schéma. Seize tests couvrent
+ces garanties, les quotas, reprises courtes et erreurs contrôlées. Une lecture
+réelle non persistante autour de Dax a réconcilié 2 666 objets et UUID uniques
+sur 27 pages ; elle a également borné la normalisation du tableau vide observé
+pour une description courte absente.
 
 ### Jalon 8 — Scoring explicable
 

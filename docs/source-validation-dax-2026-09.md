@@ -16,6 +16,8 @@
 >
 > Relance réelle idempotente : 28 septembre 2026
 >
+> Revalidation DATAtourisme : 30 septembre 2026
+>
 > Périmètre : cercle de 50 km à vol d'oiseau autour de la mairie de Dax
 
 ## 1. Objet et conclusion
@@ -523,6 +525,33 @@ explicitement ; dans DATAtourisme, il garde une portée inconnue ou de relais.
 Le statut déclaré d'un événement DATAtourisme reste `UNKNOWN`. Radar n'utilise
 pas l'endpoint d'envoi de message du fournisseur : le MVP est strictement en
 lecture.
+
+### 6.4 Revalidation du contrat le 30 septembre 2026
+
+La documentation officielle limite désormais `page_size` à 100. Une demande
+de 250 reste acceptée avec un HTTP 200, mais `meta.page_size` vaut 100 et la
+réponse contient au plus 100 objets. L'adaptateur demande donc explicitement
+100 et refuse une taille effective différente.
+
+Une nouvelle traversée complète du cercle de 50 km autour de la mairie de Dax,
+avec la même sélection explicite de champs et toujours sans borne temporelle, a
+réconcilié :
+
+- 2 666 objets annoncés et reçus ;
+- 2 666 UUID uniques et importables ;
+- 27 pages, dont 26 pages de 100 objets et une dernière page de 66 ;
+- aucun doublon, rejet de normalisation ou écart de total.
+
+Les liens `next` restent des URL HTTPS vers l'hôte et le chemin attendus. Le
+curseur opaque est maintenant porté par le paramètre `crs`. La valeur brute
+n'est ni exécutée telle quelle, ni persistée : l'adaptateur reconstruit la
+requête sur l'origine autorisée, retire `api_key` et ne transmet sa propre clé
+que dans l'en-tête.
+
+La traversée a aussi révélé que `shortDescription` peut être un tableau vide
+pour représenter une valeur absente. Cette seule forme est convertie en valeur
+inconnue ; une autre dérive de type reste une erreur de contrat. Aucun contenu
+métier de cette revalidation n'a été persisté.
 
 ## 7. Anomalies et limites
 

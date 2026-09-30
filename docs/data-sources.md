@@ -2,7 +2,7 @@
 
 > Statut : contrats du MVP validés autour de Dax
 >
-> Dernière mise à jour : 28 septembre 2026
+> Dernière mise à jour : 30 septembre 2026
 >
 > Périmètre : France métropolitaine, MVP Sirene et DATAtourisme
 
@@ -686,7 +686,7 @@ GET https://api.datatourisme.fr/v1/entertainmentAndEvent
 La requête fournit :
 
 - `geo_distance` avec latitude, longitude et rayon de collecte ;
-- `page_size=250`, maximum publié ;
+- `page_size=100`, maximum publié depuis le 15 juillet 2026 ;
 - `lang=fr` ;
 - une liste explicite de champs nécessaires.
 
@@ -751,10 +751,19 @@ fournisseur de rediriger la clé. Le chemin validé est
 `/v1/entertainmentAndEvent` ; toute évolution est d'abord traitée comme une
 rupture de contrat visible.
 
-La collecte validée a réconcilié 2 836 objets annoncés et reçus, 2 836 UUID
-uniques et 12 pages, dont une dernière page de 86 objets. Une répétition
-immédiate a produit le même ensemble d'UUID. Cela prouve la stabilité de cette
-exécution à court terme, pas celle de tous les objets à travers les années.
+La collecte initiale du 6 septembre 2026 avait réconcilié 2 836 objets annoncés
+et reçus, 2 836 UUID uniques et 12 pages avec une demande de 250 éléments. Une
+répétition immédiate avait produit le même ensemble d'UUID. Depuis, le contrat
+publié limite une page à 100 éléments et l'API ramène silencieusement une
+demande de 250 à 100. Radar demande donc explicitement 100 et contrôle la taille
+effective annoncée dans chaque page.
+
+Le 30 septembre 2026, l'adaptateur du jalon 7 a parcouru le même cercle sans
+filtre temporel : 2 666 objets annoncés, reçus et UUID uniques sur 27 pages,
+avec 100 objets sur la première page et 66 sur la dernière. Les variations du
+volume vivant ne remettent pas en cause l'identité source. Cette exécution a
+aussi confirmé que `shortDescription` peut valoir un tableau vide pour signifier
+une absence ; seule cette forme vide est normalisée en valeur inconnue.
 
 ### 6.5 Identité et déduplication
 
@@ -921,13 +930,15 @@ un petit échantillon, sans lancer une campagne massive pendant le cadrage.
 
 ### 8.4 Contrôles DATAtourisme réalisés
 
-Le rapport consigne la requête et ses champs explicites, les 12 pages suivies
-par `next`, les UUID uniques, les positions recalculées, les périodes simples
-et multiples, les contacts et les rôles de provenance. Il documente aussi la
+Le rapport consigne la requête et ses champs explicites, les pages suivies par
+`next`, les UUID uniques, les positions recalculées, les périodes simples et
+multiples, les contacts et les rôles de provenance. Il documente aussi la
 stabilité à court terme des UUID, l'absence de statut ou d'organisateur fiable,
-le retrait des emails de l'API et la période inversée. La stabilité entre
-éditions annuelles reste une limite connue ; l'identité source retenue évite
-d'en faire une hypothèse cachée.
+le retrait des emails de l'API et la période inversée. La revalidation du
+30 septembre 2026 couvre en plus la limite courante de 100 éléments et les
+27 pages du catalogue vivant autour de Dax. La stabilité entre éditions
+annuelles reste une limite connue ; l'identité source retenue évite d'en faire
+une hypothèse cachée.
 
 ### 8.5 Critère de sortie
 
