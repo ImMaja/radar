@@ -12,8 +12,14 @@ from uuid import uuid4
 from radar.collections.contracts import CollectionExecutor, Connector
 from radar.collections.worker import CollectionWorker
 from radar.config import Settings, get_settings
+from radar.events.collection import DatatourismeCollectionExecutor
+from radar.events.projection import EventProjectionService
+from radar.events.staging import EventCandidatePageStager
 from radar.persistence.collections import SqlAlchemyCollectionRepository
 from radar.persistence.database import Database
+from radar.persistence.datatourisme_execution import SqlAlchemyEventExecutionRepository
+from radar.persistence.datatourisme_projection import SqlAlchemyEventProjectionRepository
+from radar.persistence.datatourisme_staging import SqlAlchemyEventCandidateStagingRepository
 from radar.persistence.reference_data import SqlAlchemyMunicipalityReferenceRepository
 from radar.persistence.sirene_execution import SqlAlchemySireneExecutionRepository
 from radar.persistence.sirene_fallback_geocoding import (
@@ -41,6 +47,7 @@ from radar.prospects.sirene_collection import SireneBatchEnumerator
 from radar.prospects.sirene_pipeline import SireneProspectCollectionExecutor
 from radar.prospects.staging import SireneCandidatePageStager
 from radar.prospects.status_reconciliation import SireneKnownStatusReconciliationService
+from radar.providers.datatourisme import DatatourismeClient
 from radar.providers.geoplatform import GeoPlatformGeocoder
 from radar.providers.sirene import SireneClient
 from radar.reference_data.service import MunicipalityReferenceService
@@ -81,71 +88,85 @@ class WorkerRuntime:
 def build_runtime(settings: Settings, database: Database) -> WorkerRuntime:
     """Register only connectors whose complete local configuration is usable."""
 
-    if not settings.sirene_connector_configured:
-        return WorkerRuntime({})
-
-    api_key = settings.sirene_api_key
-    geolocation_path = settings.sirene_geolocation_file
-    resource_identifier = settings.sirene_geolocation_resource_identifier
-    resource_url = settings.sirene_geolocation_resource_url
-    retrieved_at = settings.sirene_geolocation_retrieved_at
-    assert api_key is not None
-    assert geolocation_path is not None
-    assert resource_identifier is not None
-    assert resource_url is not None
-    assert retrieved_at is not None
-
     engine = database.engine
-    sirene_client = SireneClient(api_key.get_secret_value())
-    geocoder = GeoPlatformGeocoder()
-    planner = SireneCollectionPlanningService(
-        MunicipalityReferenceService(SqlAlchemyMunicipalityReferenceRepository(engine)),
-        SqlAlchemySirenePlanRepository(engine),
-    )
-    enumerator = SireneBatchEnumerator(
-        planner,
-        SqlAlchemySireneExecutionRepository(engine),
-        sirene_client,
-        SireneCandidatePageStager(SqlAlchemySireneCandidateStagingRepository(engine)),
-    )
-    geolocation_importer = SireneGeolocationImportService(
-        SqlAlchemySireneGeolocationRepository(engine),
-        clock=utc_now,
-    )
-    position_resolver = SirenePositionResolutionService(
-        SqlAlchemySirenePositionResolutionRepository(engine)
-    )
-    fallback_geocoder = SireneFallbackGeocodingService(
-        SqlAlchemySireneFallbackGeocodingRepository(engine),
-        geocoder,
-    )
-    projector = SireneProspectProjectionService(
-        SqlAlchemySireneProspectProjectionRepository(engine)
-    )
-    status_reconciler = SireneKnownStatusReconciliationService(
-        SqlAlchemySireneKnownStatusRepository(engine),
-        sirene_client,
-    )
-    executor = SireneProspectCollectionExecutor(
-        enumerator,
-        geolocation_importer,
-        geolocation_path,
-        SireneGeolocationReleaseSource(
-            resource_identifier=resource_identifier,
-            resource_url=resource_url,
-            published_on=settings.sirene_geolocation_published_on,
-            retrieved_at=retrieved_at,
-            license_name=settings.sirene_geolocation_license_name,
-            expected_sha1=settings.sirene_geolocation_expected_sha1,
-            expected_size_bytes=settings.sirene_geolocation_expected_size_bytes,
-        ),
-        position_resolver,
-        fallback_geocoder,
-        projector,
-        status_reconciler,
-    )
+    executors: dict[Connector, CollectionExecutor] = {}
+    close_callbacks: list[Callable[[], None]] = []
 
-    return WorkerRuntime({"SIRENE": executor}, (sirene_client.close, geocoder.close))
+    if settings.sirene_connector_configured:
+        api_key = settings.sirene_api_key
+        geolocation_path = settings.sirene_geolocation_file
+        resource_identifier = settings.sirene_geolocation_resource_identifier
+        resource_url = settings.sirene_geolocation_resource_url
+        retrieved_at = settings.sirene_geolocation_retrieved_at
+        assert api_key is not None
+        assert geolocation_path is not None
+        assert resource_identifier is not None
+        assert resource_url is not None
+        assert retrieved_at is not None
+
+        sirene_client = SireneClient(api_key.get_secret_value())
+        geocoder = GeoPlatformGeocoder()
+        planner = SireneCollectionPlanningService(
+            MunicipalityReferenceService(SqlAlchemyMunicipalityReferenceRepository(engine)),
+            SqlAlchemySirenePlanRepository(engine),
+        )
+        enumerator = SireneBatchEnumerator(
+            planner,
+            SqlAlchemySireneExecutionRepository(engine),
+            sirene_client,
+            SireneCandidatePageStager(SqlAlchemySireneCandidateStagingRepository(engine)),
+        )
+        geolocation_importer = SireneGeolocationImportService(
+            SqlAlchemySireneGeolocationRepository(engine),
+            clock=utc_now,
+        )
+        position_resolver = SirenePositionResolutionService(
+            SqlAlchemySirenePositionResolutionRepository(engine)
+        )
+        fallback_geocoder = SireneFallbackGeocodingService(
+            SqlAlchemySireneFallbackGeocodingRepository(engine),
+            geocoder,
+        )
+        projector = SireneProspectProjectionService(
+            SqlAlchemySireneProspectProjectionRepository(engine)
+        )
+        status_reconciler = SireneKnownStatusReconciliationService(
+            SqlAlchemySireneKnownStatusRepository(engine),
+            sirene_client,
+        )
+        executors["SIRENE"] = SireneProspectCollectionExecutor(
+            enumerator,
+            geolocation_importer,
+            geolocation_path,
+            SireneGeolocationReleaseSource(
+                resource_identifier=resource_identifier,
+                resource_url=resource_url,
+                published_on=settings.sirene_geolocation_published_on,
+                retrieved_at=retrieved_at,
+                license_name=settings.sirene_geolocation_license_name,
+                expected_sha1=settings.sirene_geolocation_expected_sha1,
+                expected_size_bytes=settings.sirene_geolocation_expected_size_bytes,
+            ),
+            position_resolver,
+            fallback_geocoder,
+            projector,
+            status_reconciler,
+        )
+        close_callbacks.extend((sirene_client.close, geocoder.close))
+
+    if settings.datatourisme_connector_configured:
+        datatourisme_key = settings.datatourisme_api_key
+        assert datatourisme_key is not None
+        datatourisme_client = DatatourismeClient(datatourisme_key.get_secret_value())
+        executors["DATATOURISME"] = DatatourismeCollectionExecutor(
+            SqlAlchemyEventExecutionRepository(engine),
+            datatourisme_client,
+            EventCandidatePageStager(SqlAlchemyEventCandidateStagingRepository(engine)),
+            EventProjectionService(SqlAlchemyEventProjectionRepository(engine)),
+        )
+        close_callbacks.append(datatourisme_client.close)
+
+    return WorkerRuntime(executors, tuple(close_callbacks))
 
 
 def worker_identity() -> str:

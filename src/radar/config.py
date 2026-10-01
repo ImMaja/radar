@@ -139,6 +139,14 @@ class Settings(BaseSettings):
         )
 
     @property
+    def datatourisme_connector_configured(self) -> bool:
+        """Enable event collection only when a nonempty API key is configured."""
+
+        return self.datatourisme_api_key is not None and bool(
+            self.datatourisme_api_key.get_secret_value()
+        )
+
+    @property
     def session_cookie_name(self) -> str:
         """Use the browser-enforced Host prefix only over production HTTPS."""
 

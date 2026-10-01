@@ -70,3 +70,22 @@ def test_sirene_connector_is_enabled_only_with_a_readable_release(
     )
 
     assert settings.sirene_connector_configured is True
+
+
+def test_datatourisme_connector_requires_a_nonempty_key() -> None:
+    absent = Settings(_env_file=None, database_url=SecretStr(DATABASE_URL))
+    empty = Settings(
+        _env_file=None,
+        database_url=SecretStr(DATABASE_URL),
+        datatourisme_api_key=SecretStr(""),
+    )
+    configured = Settings(
+        _env_file=None,
+        database_url=SecretStr(DATABASE_URL),
+        datatourisme_api_key=SecretStr("datatourisme-test-secret"),
+    )
+
+    assert absent.datatourisme_connector_configured is False
+    assert empty.datatourisme_connector_configured is False
+    assert configured.datatourisme_connector_configured is True
+    assert "datatourisme-test-secret" not in repr(configured)

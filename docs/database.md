@@ -607,9 +607,9 @@ dans le bilan de collecte.
 Depuis la migration `20261001_13`, `event`, `event_period_set` et
 `event_period` font partie du schéma exécutable. Les contraintes imposent les
 couches, l'unicité de chaque ensemble courant, l'ordre temporel, le fuseau
-d'interprétation et la précision. L'importeur DATAtourisme n'est pas encore
-branché à ces tables : cette migration fournit volontairement le socle du
-prochain incrément sans prétendre que la collecte de bout en bout est achevée.
+d'interprétation et la précision. Le worker DATAtourisme alimente désormais
+ces tables après le staging et la validation de chaque collecte ; le catalogue
+local les interroge sans nouvel appel au fournisseur.
 
 ### 9.5 Visibilité ordinaire d'un événement
 
@@ -1448,6 +1448,9 @@ projections. L'observation en quarantaine reste liée au diagnostic, la
 projection courante et la fiche existante restent inchangées, aucune seconde
 fiche n'est créée et le cycle se termine `PARTIAL`. Seule une évolution
 explicite et testée du contrat source permet de reprendre cet objet.
+Si la même révision avait déjà été publiée sans conflit, son observation
+historique n'est pas réécrite : seule l'occurrence contradictoire du nouveau
+cycle porte `IDENTITY_CONFLICT` et la décision `ERROR`.
 
 ### 17.2 Objet masqué
 
@@ -1535,6 +1538,10 @@ Les index initiaux sont :
 - index sur type et valeur normalisée des contacts ;
 - index sur la dernière observation des liens source et le résultat des
   cycles ;
+- index partiel sur URI et identité des observations DATAtourisme non caviardées
+  pour contrôler les collisions entre UUID sans balayage complet ;
+- index partiel sur les occurrences `IDENTITY_CONFLICT` par identité externe
+  pour empêcher une reprise automatique après quarantaine ;
 - index partiel sur les sessions non révoquées avec leur expiration.
 
 Les requêtes de distance doivent partir de `ST_DWithin` pour permettre l'usage

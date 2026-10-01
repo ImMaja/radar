@@ -68,6 +68,15 @@ complète est assemblée dans le worker. Le connecteur n'est proposé dans
 l'interface que lorsqu'une clé Sirene et un fichier mensuel local accompagné
 de sa provenance complète sont configurés.
 
+Le pipeline DATAtourisme est maintenant assemblé dans le worker lorsque sa
+clé API est configurée. Il sait préparer, réconcilier et projeter les pages
+événementielles ; une reprise et une seconde collecte réutilisent les mêmes
+identités. Son déclenchement depuis le web reste indisponible jusqu'à la
+livraison de la navigation événementielle. Une première API privée permet déjà
+de consulter la liste et le détail des événements enregistrés, avec filtres
+locaux, périodes effectives, contacts et provenance ; elle ne relance jamais
+la collecte DATAtourisme.
+
 Un essai opérationnel sur le millésime de septembre a réconcilié 161 506
 établissements et 160 429 positions fichier, puis validé la reprise fine du
 géocodage de repli. Il a aussi conduit à accepter les états nuls des seules

@@ -14,11 +14,13 @@ from radar.auth.service import AuthService
 from radar.collections.contracts import CollectionBackend, Connector
 from radar.collections.service import CollectionService, UnavailableCollectionBackend
 from radar.config import Settings, get_settings
+from radar.events.catalog import EventCatalogBackend, UnavailableEventCatalogBackend
 from radar.geography.contracts import GeographyBackend
 from radar.geography.service import GeographyService
 from radar.persistence.auth import SqlAlchemyAuthRepository
 from radar.persistence.collections import SqlAlchemyCollectionRepository
 from radar.persistence.database import Database
+from radar.persistence.event_catalog import SqlAlchemyEventCatalogRepository
 from radar.persistence.geography import SqlAlchemyGeographyRepository
 from radar.persistence.prospect_catalog import SqlAlchemyProspectCatalogRepository
 from radar.prospects.catalog import ProspectCatalogBackend, UnavailableProspectCatalogBackend
@@ -26,6 +28,7 @@ from radar.providers.geoplatform import GeoPlatformGeocoder
 from radar.web.auth import router as auth_router
 from radar.web.collections import router as collections_router
 from radar.web.errors import ApiProblem, api_problem_handler, request_validation_handler
+from radar.web.events import router as events_router
 from radar.web.geography import router as geography_router
 from radar.web.health import ReadinessProbe
 from radar.web.health import router as health_router
@@ -41,6 +44,7 @@ def create_app(
     geography_backend: GeographyBackend | None = None,
     collection_backend: CollectionBackend | None = None,
     prospect_backend: ProspectCatalogBackend | None = None,
+    event_backend: EventCatalogBackend | None = None,
 ) -> FastAPI:
     """Build one Radar web process with explicit dependencies."""
 
@@ -70,6 +74,7 @@ def create_app(
             owned_geocoder,
         )
     if collection_backend is None:
+        # Event collection stays hidden until the event catalog can be consulted.
         enabled_connectors: frozenset[Connector] = (
             frozenset(("SIRENE",)) if resolved_settings.sirene_connector_configured else frozenset()
         )
@@ -86,6 +91,12 @@ def create_app(
             SqlAlchemyProspectCatalogRepository(owned_database.engine)
             if owned_database is not None
             else UnavailableProspectCatalogBackend()
+        )
+    if event_backend is None:
+        event_backend = (
+            SqlAlchemyEventCatalogRepository(owned_database.engine)
+            if owned_database is not None
+            else UnavailableEventCatalogBackend()
         )
 
     @asynccontextmanager
@@ -117,11 +128,13 @@ def create_app(
     app.state.geography_backend = geography_backend
     app.state.collection_backend = collection_backend
     app.state.prospect_backend = prospect_backend
+    app.state.event_backend = event_backend
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(geography_router)
     app.include_router(collections_router)
     app.include_router(prospects_router)
+    app.include_router(events_router)
     if resolved_settings.frontend_directory.joinpath("index.html").is_file():
         app.mount(
             "/",

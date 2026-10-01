@@ -255,12 +255,20 @@ def downgrade() -> None:
     )
     op.execute("DELETE FROM source_binding WHERE data_source_code = 'DATATOURISME_API'")
     op.execute(
-        "WITH detached AS ("
-        "UPDATE external_identity SET opportunity_id = NULL "
+        "CREATE TEMPORARY TABLE datatourisme_downgrade_opportunity ON COMMIT DROP AS "
+        "SELECT DISTINCT opportunity_id FROM external_identity "
         "WHERE authority = 'DATATOURISME' AND namespace = 'DATATOURISME_UUID' "
-        "RETURNING opportunity_id) "
-        "DELETE FROM opportunity WHERE id IN (SELECT opportunity_id FROM detached)"
+        "AND opportunity_id IS NOT NULL"
     )
+    op.execute(
+        "UPDATE external_identity SET opportunity_id = NULL "
+        "WHERE authority = 'DATATOURISME' AND namespace = 'DATATOURISME_UUID'"
+    )
+    op.execute(
+        "DELETE FROM opportunity WHERE id IN ("
+        "SELECT opportunity_id FROM datatourisme_downgrade_opportunity)"
+    )
+    op.execute("DROP TABLE datatourisme_downgrade_opportunity")
     op.execute("DELETE FROM source_observation WHERE data_source_code = 'DATATOURISME_API'")
     op.execute(
         "DELETE FROM external_identity "

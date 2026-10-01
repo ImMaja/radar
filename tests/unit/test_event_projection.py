@@ -68,6 +68,10 @@ def test_service_rejects_another_connector_or_missing_decision() -> None:
         EventProjectionSummary(2, 1, 0, 0, 0, 0).validate()
 
 
+def test_quarantined_identity_is_a_reconciled_projection_decision() -> None:
+    EventProjectionSummary(2, 1, 0, 0, 0, 0, 1).validate()
+
+
 def test_period_projection_rejects_malformed_or_missing_complete_sets() -> None:
     with pytest.raises(EventProjectionError, match="no validated period"):
         _periods({})

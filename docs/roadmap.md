@@ -648,10 +648,85 @@ passé encore inconnu ne crée pas de fiche. Un changement des périodes retire
 l'ancien ensemble `SOURCE` avant d'en publier un nouveau, sans toucher à
 l'ensemble `USER` ni à l'état de masquage. Les décisions des occurrences sont
 réconciliées à la fin de la tentative et les tests PostGIS couvrent création,
-reprise, mise à jour et coexistence des deux couches. Cette projection n'est
-pas encore branchée au worker : localisation persistée, contacts, détection
-des contradictions d'identité, interface et filtres restent à réaliser avant
-que le jalon soit utilisable de bout en bout.
+reprise, mise à jour et coexistence des deux couches. À ce stade, cette
+projection n'est pas encore branchée au worker ; localisation persistée,
+contacts, détection des contradictions d'identité, interface et filtres
+restent à réaliser avant que le jalon soit utilisable de bout en bout.
+
+Le sixième incrément projette aussi la localisation exacte choisie pendant le
+staging PostGIS. Son point, son adresse et l'index du lieu source restent liés
+à l'observation DATAtourisme et à une version `SOURCE` de
+`location_assertion`. Une relance sans changement ne crée pas de nouvelle
+version ; un changement retire seulement l'ancienne version source. La
+version `USER` éventuelle reste intacte et prioritaire pour les futures
+recherches par distance. La distance au centre de collecte n'est pas stockée
+sur la fiche. Cette étape ne branche toujours pas le worker et ne livre pas
+encore l'interface événementielle.
+
+Le septième incrément projette les téléphones et sites explicitement publiés
+dans `hasContact` et `hasBookingContact` en ensembles de contacts `SOURCE`
+versionnés. Chaque canal conserve sa valeur publique, une clé de comparaison
+prudente, son chemin dans l'observation et un libellé « contact général » ou
+« réservation » ; sa portée reste `UNKNOWN`. Les canaux identiques sont
+dédupliqués dans l'ensemble, mais une nouvelle observation sans changement
+de contacts ne crée pas de version supplémentaire. Un ensemble `USER` reste
+intact et prioritaire. Les rôles producteur, diffuseur et propriétaire ne
+deviennent ni organisateurs ni contacts locaux ; aucun email n'est inventé.
+Le worker, le catalogue événementiel et la mise en quarantaine des conflits
+d'identité restent à réaliser pour achever le jalon.
+
+Le huitième incrément ajoute l'orchestration interne de la collecte
+DATAtourisme : chaque page est normalisée et préparée avant l'enregistrement
+de sa preuve dans `collection_page`. La source et son lot ne deviennent
+`SUCCEEDED` qu'après rapprochement du total annoncé, des UUID, des pages et
+des éléments préparés lors de la tentative courante. Une interruption reprend
+la requête depuis sa première page, sans réutiliser un curseur fournisseur ;
+les révisions identiques réemploient leur observation source, tandis que les
+tentatives gardent leurs propres occurrences de collecte. La projection des
+fiches ne commence qu'après ce succès de collecte. Des tests PostGIS couvrent
+la reprise, une page vide et le refus d'une preuve incohérente. Le connecteur
+n'est pas encore activé dans le worker ni dans l'interface : il reste à traiter
+les contradictions d'identité avant une collecte utilisable de bout en bout.
+
+Le neuvième incrément met en quarantaine le premier conflit d'identité
+objectivement détectable : une URI de ressource DATAtourisme revendiquée par
+deux UUID. Une observation jamais publiée reçoit `IDENTITY_CONFLICT` ; une
+révision déjà liée à une fiche reste historiquement valide, mais sa nouvelle
+occurrence est bloquée avec un diagnostic. Aucune fiche ni couche `USER` n'est
+modifiée par l'objet suspect. La projection réconcilie ces décisions et rend
+le cycle `PARTIAL`, sans publier une couverture complète. Un index partiel
+borne le coût du contrôle. Les variations ordinaires de titre, période, lieu
+ou URI non revendiquée ne sont pas considérées comme des conflits. Le worker
+et l'interface événementielle restent à raccorder. Une fois un UUID mis en
+quarantaine, ses collectes ultérieures restent bloquées jusqu'à une décision
+explicite sur le contrat source, même si sa nouvelle URI paraît libre.
+
+Le dixième incrément raccorde le pipeline DATAtourisme au processus worker
+quand sa clé API est configurée. Il peut fonctionner sans configuration Sirene
+et ferme son client fournisseur à l'arrêt. Un test PostgreSQL/PostGIS exécute
+le vrai worker avec une réponse HTTP simulée, depuis la création du travail
+jusqu'à la couverture, puis répète la collecte : une seule fiche et une seule
+révision source subsistent, avec deux présences et deux preuves de page. Le
+second parcours intégré vérifie que deux UUID revendiquant la même URI
+terminent le travail `PARTIAL`, sans fiche ni couverture. Le
+déclenchement DATAtourisme reste désactivé dans le serveur web tant que le
+catalogue événementiel n'est pas consultable ; le branchement du worker seul
+ne lance aucune collecte spontanée.
+
+Le onzième incrément expose la lecture privée du catalogue événementiel par
+`GET /api/v1/events` et `GET /api/v1/events/{id}`. La liste interroge uniquement
+PostgreSQL/PostGIS, dans le rayon demandé ou celui configuré, et propose
+recherche par titre ou commune, filtre de période par chevauchement, catégorie
+source, organisateur, contact disponible et statut déclaré, ainsi que tris par
+date et distance avec pagination. Elle écarte les fiches masquées et passées,
+et les événements annulés sauf demande explicite. La fiche détail présente
+toutes les périodes de la couche effective, les contacts effectifs et la
+fraîcheur des observations avec leur provenance. La catégorie est encore le
+type brut publié par DATAtourisme : aucune taxonomie métier ni score n'est
+inventé à cette étape. Les tests HTTP et PostGIS vérifient notamment la
+priorité d'une correction utilisateur et l'absence d'appel fournisseur. La
+navigation événementielle et le déclenchement de sa collecte depuis le site
+restent à livrer avant que ce jalon soit utilisable par l'utilisateur.
 
 ### Jalon 8 — Scoring explicable
 

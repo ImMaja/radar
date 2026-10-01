@@ -15,6 +15,8 @@ from radar.events.projection import (
     EventProjectionSummary,
 )
 from radar.events.staging import DATATOURISME_DATA_SOURCE_CODE
+from radar.persistence.datatourisme_contacts import project_event_contacts
+from radar.persistence.datatourisme_location import project_event_location
 
 
 class _Period(TypedDict):
@@ -188,7 +190,7 @@ class SqlAlchemyEventProjectionRepository:
                             """
                         SELECT item.id, item.external_identity_id,
                                item.source_observation_id, item.reason,
-                               observation.payload
+                               observation.payload, observation.validation_status
                         FROM collection_item AS item
                         JOIN collection_batch AS batch
                           ON batch.id = item.collection_batch_id
@@ -257,7 +259,7 @@ class SqlAlchemyEventProjectionRepository:
             connection.execute(
                 text(
                     """
-                SELECT id, opportunity_id, current_observation_id
+                SELECT id, opportunity_id, current_observation_id, source_url
                 FROM source_binding
                 WHERE data_source_code = :source_code
                   AND external_identity_id = :identity_id
@@ -276,6 +278,23 @@ class SqlAlchemyEventProjectionRepository:
             raise EventProjectionError("DATAtourisme identity and binding disagree")
         if binding is None and identity["opportunity_id"] is not None:
             raise EventProjectionError("DATAtourisme identity has no source binding")
+        if item["validation_status"] == "IDENTITY_CONFLICT":
+            cls._quarantine_identity_conflict(
+                connection, item, "PREVIOUSLY_QUARANTINED_IDENTITY", now
+            )
+            return
+        if item["validation_status"] != "VALID":
+            raise EventProjectionError("projection-ready DATAtourisme observation is invalid")
+        if cls._identity_was_quarantined(connection, identity["id"]):
+            cls._quarantine_identity_conflict(connection, item, "PRIOR_IDENTITY_CONFLICT", now)
+            return
+        if (binding is None or binding["source_url"] != fields["uri"]) and cls._uri_is_claimed(
+            connection, identity["id"], fields["uri"]
+        ):
+            cls._quarantine_identity_conflict(
+                connection, item, "SOURCE_URI_SHARED_BY_MULTIPLE_UUIDS", now
+            )
+            return
         if not periods:
             raise EventProjectionError("a projection-ready event has no valid period")
         if binding is None and item["reason"].get("temporal_state") == "PAST":
@@ -415,7 +434,24 @@ class SqlAlchemyEventProjectionRepository:
         period_changed = cls._project_periods(
             connection, opportunity_id, observation_id, periods, now
         )
-        if not created and (prior_observation_id != observation_id or period_changed):
+        location_changed = project_event_location(
+            connection,
+            opportunity_id,
+            observation_id,
+            item["payload"],
+            item["reason"],
+            now,
+        )
+        contacts_changed = project_event_contacts(
+            connection, opportunity_id, observation_id, item["payload"], now
+        )
+        changed = (
+            prior_observation_id != observation_id
+            or period_changed
+            or location_changed
+            or contacts_changed
+        )
+        if not created and changed:
             connection.execute(
                 text(
                     """
@@ -425,15 +461,7 @@ class SqlAlchemyEventProjectionRepository:
                 ),
                 parameters,
             )
-        decision = (
-            "CREATED"
-            if created
-            else (
-                "UPDATED"
-                if prior_observation_id != observation_id or period_changed
-                else "UNCHANGED"
-            )
-        )
+        decision = "CREATED" if created else ("UPDATED" if changed else "UNCHANGED")
         cls._decide(connection, item["id"], opportunity_id, decision, "EVENT_PROJECTED", now)
 
     @staticmethod
@@ -616,6 +644,99 @@ class SqlAlchemyEventProjectionRepository:
         if changed != 1:
             raise EventProjectionError("DATAtourisme event decision was already changed")
 
+    @staticmethod
+    def _uri_is_claimed(connection: Connection, identity_id: UUID, uri: object) -> bool:
+        claimed = connection.execute(
+            text(
+                """
+                SELECT 1 FROM source_observation
+                WHERE data_source_code = :source_code
+                  AND source_reference = :uri
+                  AND external_identity_id <> :identity_id
+                  AND redacted_at IS NULL
+                LIMIT 1
+                """
+            ),
+            {
+                "source_code": DATATOURISME_DATA_SOURCE_CODE,
+                "uri": uri,
+                "identity_id": identity_id,
+            },
+        ).scalar_one_or_none()
+        return claimed is not None
+
+    @staticmethod
+    def _identity_was_quarantined(connection: Connection, identity_id: UUID) -> bool:
+        quarantined = connection.execute(
+            text(
+                """
+                SELECT 1 FROM collection_item
+                WHERE external_identity_id = :identity_id
+                  AND normalization_result = 'IDENTITY_CONFLICT'
+                LIMIT 1
+                """
+            ),
+            {"identity_id": identity_id},
+        ).scalar_one_or_none()
+        return quarantined is not None
+
+    @staticmethod
+    def _quarantine_identity_conflict(
+        connection: Connection,
+        item: RowMapping,
+        code: str,
+        now: datetime,
+    ) -> None:
+        if item["validation_status"] != "IDENTITY_CONFLICT":
+            observation = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT source_binding_id, validation_status
+                        FROM source_observation WHERE id = :observation_id
+                        FOR UPDATE
+                        """
+                    ),
+                    {"observation_id": item["source_observation_id"]},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if observation is None or observation["validation_status"] != "VALID":
+                raise EventProjectionError("DATAtourisme conflict observation is unavailable")
+            # A revision already published by a binding remains immutable. Its
+            # occurrence is quarantined; a newly staged revision is marked too.
+            if observation["source_binding_id"] is None:
+                connection.execute(
+                    text(
+                        """
+                    UPDATE source_observation
+                    SET validation_status = 'IDENTITY_CONFLICT',
+                        normalization_error = jsonb_build_object('code', CAST(:code AS text))
+                    WHERE id = :observation_id AND validation_status = 'VALID'
+                      AND source_binding_id IS NULL
+                    """
+                    ),
+                    {"observation_id": item["source_observation_id"], "code": code},
+                )
+        decided = connection.execute(
+            text(
+                """
+                UPDATE collection_item SET
+                    normalization_result = 'IDENTITY_CONFLICT',
+                    decision = 'ERROR',
+                    reason = reason || jsonb_build_object(
+                        'projection_code', CAST(:code AS text)
+                    ),
+                    updated_at = :now
+                WHERE id = :item_id AND decision IS NULL
+                """
+            ),
+            {"item_id": item["id"], "code": code, "now": now},
+        ).rowcount
+        if decided != 1:
+            raise EventProjectionError("DATAtourisme identity conflict was already decided")
+
     def summary(self, reservation: ReservedCollection) -> EventProjectionSummary:
         try:
             with self._engine.connect() as connection:
@@ -631,7 +752,12 @@ class SqlAlchemyEventProjectionRepository:
                             count(*) FILTER (WHERE item.decision = 'UNCHANGED') AS unchanged_count,
                             count(*) FILTER (WHERE item.decision = 'REJECTED') AS rejected_count,
                             count(*) FILTER (WHERE item.decision = 'COUNTED_ONLY') AS counted_only_count,
-                            count(*) FILTER (WHERE item.decision IS NULL OR item.decision = 'ERROR')
+                            count(*) FILTER (WHERE item.decision = 'ERROR'
+                              AND item.normalization_result = 'IDENTITY_CONFLICT')
+                                AS identity_conflict_count,
+                            count(*) FILTER (WHERE item.decision IS NULL OR
+                                (item.decision = 'ERROR' AND item.normalization_result
+                                 <> 'IDENTITY_CONFLICT'))
                                 AS undecided_count
                         FROM collection_item AS item
                         JOIN collection_batch AS batch
@@ -661,6 +787,7 @@ class SqlAlchemyEventProjectionRepository:
             unchanged_count=row["unchanged_count"],
             rejected_count=row["rejected_count"],
             counted_only_count=row["counted_only_count"],
+            identity_conflict_count=row["identity_conflict_count"],
         )
         summary.validate()
         return summary

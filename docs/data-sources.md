@@ -785,6 +785,18 @@ sans devenir la projection courante ni créer une seconde fiche. Le cycle est
 `PARTIAL` et l'objet reste bloqué jusqu'à une évolution explicite, documentée et
 testée du contrat de la source.
 
+Le premier contrôle automatisé retient uniquement une contradiction forte :
+la même URI de ressource DATAtourisme est observée sous deux UUID distincts.
+Les deux nouveaux objets sont bloqués si aucun n'est déjà publié ; si une fiche
+publie déjà cette URI, elle reste inchangée et le nouvel objet est bloqué.
+Une variation de titre, de dates, de lieu ou une nouvelle URI non revendiquée
+par un autre UUID n'est pas, à elle seule, une preuve suffisante de conflit.
+Une observation déjà publiée conserve sa validation historique ; seule sa
+nouvelle occurrence contradictoire est mise en quarantaine.
+Après un conflit, les observations suivantes du même UUID restent bloquées,
+même si l'URI change : seule une décision explicite sur le contrat source peut
+lever cette quarantaine.
+
 L'URI et `identifier` sont conservés pour la provenance et le diagnostic, mais
 ne se substituent pas à l'UUID comme clé de rapprochement.
 

@@ -31,6 +31,7 @@ class EventProjectionSummary:
     unchanged_count: int
     rejected_count: int
     counted_only_count: int
+    identity_conflict_count: int = 0
 
     def validate(self) -> None:
         """Ensure that no staged candidate disappeared from the projection."""
@@ -42,6 +43,7 @@ class EventProjectionSummary:
             self.unchanged_count,
             self.rejected_count,
             self.counted_only_count,
+            self.identity_conflict_count,
         )
         if any(count < 0 for count in counts) or sum(counts[1:]) != self.requested_count:
             raise EventProjectionError("DATAtourisme event decisions do not reconcile")

@@ -60,6 +60,22 @@ def test_migrations_enable_postgis_and_create_the_current_schema(
                     )
                 ).scalars()
             )
+            observation_indexes = set(
+                connection.execute(
+                    text(
+                        "SELECT indexname FROM pg_indexes "
+                        "WHERE schemaname = 'public' AND tablename = 'source_observation'"
+                    )
+                ).scalars()
+            )
+            item_indexes = set(
+                connection.execute(
+                    text(
+                        "SELECT indexname FROM pg_indexes "
+                        "WHERE schemaname = 'public' AND tablename = 'collection_item'"
+                    )
+                ).scalars()
+            )
     finally:
         engine.dispose()
 
@@ -110,6 +126,8 @@ def test_migrations_enable_postgis_and_create_the_current_schema(
     }
     assert "ix_commune_boundary_boundary" in municipality_indexes
     assert "ix_commune_boundary_boundary_geography" in municipality_indexes
+    assert "ix_source_observation_datatourisme_uri_identity" in observation_indexes
+    assert "ix_collection_item_identity_conflict" in item_indexes
 
     database = Database(SecretStr(database_url))
     try:
