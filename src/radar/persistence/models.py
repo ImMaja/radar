@@ -1,6 +1,6 @@
 """SQLAlchemy models owned by Radar's persistence layer."""
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Time,
     Uuid,
     text,
 )
@@ -985,6 +986,164 @@ class ProspectModel(Base):
     last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EventModel(Base):
+    """Current source projection for one user-visible event."""
+
+    __tablename__ = "event"
+    __table_args__ = (
+        CheckConstraint(
+            "length(btrim(source_title)) > 0",
+            name="ck_event_source_title_non_empty",
+        ),
+        CheckConstraint(
+            "source_audience_value IS NULL OR source_audience_value > 0",
+            name="ck_event_source_audience_positive",
+        ),
+        CheckConstraint(
+            "(source_audience_value IS NULL AND source_audience_kind IS NULL "
+            "AND source_audience_scope IS NULL) OR "
+            "(source_audience_value IS NOT NULL "
+            "AND source_audience_kind IN ('EXPECTED_ATTENDANCE', 'EVENT_CAPACITY') "
+            "AND source_audience_scope IS NOT NULL)",
+            name="ck_event_source_audience_complete",
+        ),
+        CheckConstraint(
+            "declared_status IN ('SCHEDULED', 'POSTPONED', 'CANCELLED', 'UNKNOWN')",
+            name="ck_event_declared_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("opportunity.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_title: Mapped[str] = mapped_column(Text, nullable=False)
+    source_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_types: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    source_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_format: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_audience_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_audience_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_audience_scope: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    declared_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    organizer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    organizer_organization_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("organization.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    source_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_links: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    source_business_signals: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EventPeriodSetModel(Base):
+    """One immutable source or user version of an event's complete period set."""
+
+    __tablename__ = "event_period_set"
+    __table_args__ = (
+        CheckConstraint("layer IN ('SOURCE', 'USER')", name="ck_event_period_set_layer"),
+        CheckConstraint(
+            "(layer = 'SOURCE' AND source_observation_id IS NOT NULL) OR "
+            "(layer = 'USER' AND source_observation_id IS NULL)",
+            name="ck_event_period_set_observation_layer",
+        ),
+        CheckConstraint(
+            "is_current OR retired_at IS NOT NULL",
+            name="ck_event_period_set_retired",
+        ),
+        Index(
+            "uq_event_period_set_current_layer",
+            "event_id",
+            "layer",
+            unique=True,
+            postgresql_where=text("is_current"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("event.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    layer: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_observation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("source_observation.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EventPeriodModel(Base):
+    """One published interval inside a versioned event period set."""
+
+    __tablename__ = "event_period"
+    __table_args__ = (
+        CheckConstraint("display_order >= 0", name="ck_event_period_display_order"),
+        CheckConstraint(
+            "end_date IS NULL OR end_date >= start_date",
+            name="ck_event_period_date_order",
+        ),
+        CheckConstraint(
+            "COALESCE(end_date, start_date) <> start_date OR start_time IS NULL "
+            "OR end_time IS NULL OR end_time >= start_time",
+            name="ck_event_period_time_order",
+        ),
+        CheckConstraint(
+            "interpretation_timezone = 'Europe/Paris'",
+            name="ck_event_period_timezone",
+        ),
+        CheckConstraint(
+            "precision IN ('DATE_ONLY', 'DATE_AND_TIME', 'MIXED')",
+            name="ck_event_period_precision",
+        ),
+        Index(
+            "uq_event_period_set_display_order",
+            "period_set_id",
+            "display_order",
+            unique=True,
+        ),
+        Index("ix_event_period_dates", "start_date", "end_date"),
+        Index(
+            "ix_event_period_date_range",
+            text("daterange(start_date, COALESCE(end_date, start_date), '[]')"),
+            postgresql_using="gist",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    period_set_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("event_period_set.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_date: Mapped[date] = mapped_column(nullable=False)
+    end_date: Mapped[date | None] = mapped_column(nullable=True)
+    start_time: Mapped[time | None] = mapped_column(Time(), nullable=True)
+    end_time: Mapped[time | None] = mapped_column(Time(), nullable=True)
+    interpretation_timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    precision: Mapped[str] = mapped_column(String(24), nullable=False)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recurrence: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    source_path: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ContactSetModel(Base):

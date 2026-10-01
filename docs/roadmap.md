@@ -2,7 +2,7 @@
 
 > Statut : jalons 0 à 6 terminés, jalon 7 en cours
 >
-> Dernière mise à jour : 30 septembre 2026
+> Dernière mise à jour : 1er octobre 2026
 >
 > Horizon : MVP privé pour un utilisateur en France métropolitaine
 
@@ -598,6 +598,47 @@ ces garanties, les quotas, reprises courtes et erreurs contrôlées. Une lecture
 réelle non persistante autour de Dax a réconcilié 2 666 objets et UUID uniques
 sur 27 pages ; elle a également borné la normalisation du tableau vide observé
 pour une description courte absente.
+
+Le deuxième incrément applique les décisions locales que le filtre du
+fournisseur ne peut pas garantir. Il relit strictement chaque date et heure,
+rejette séparément les périodes illisibles ou inversées sans perdre leurs
+sœurs valides, interprète les heures sans fuseau dans `Europe/Paris` et utilise
+la fin de la dernière journée connue lorsqu'une heure de fin manque. Les états
+`UPCOMING`, `ONGOING` et `PAST` sont calculés à partir de toutes les périodes
+valides ; une fiche nouvelle exige au moins une période non terminée, tandis
+qu'un objet uniquement passé reste identifiable pour une éventuelle fiche déjà
+connue. La position métropolitaine la plus proche est retenue, sa distance est
+recalculée localement et le cercle exact est appliqué indépendamment de la
+présélection DATAtourisme. Le contrôle d'appartenance à la France
+métropolitaine est injecté explicitement afin que l'implémentation PostGIS
+suivante s'appuie sur les contours officiels plutôt que sur une boîte
+géographique approximative.
+
+Le troisième incrément matérialise le schéma événementiel sans encore brancher
+le worker. La source `DATATOURISME_API` est enregistrée avec sa documentation et
+sa licence ; la projection `event` reste séparée de la racine `opportunity` et
+n'infère ni organisateur ni statut publié. Les calendriers `SOURCE` et `USER`
+sont versionnés indépendamment par ensembles complets, avec au plus un ensemble
+courant de chaque couche. Les périodes imposent l'ordre des dates et des heures,
+le fuseau d'interprétation `Europe/Paris`, une précision explicite et des index
+pour les futurs filtres de chevauchement. Les incréments suivants assurent le
+staging durable puis la projection idempotente sur ces tables.
+
+Le quatrième incrément rend la préparation des pages durable avant toute
+projection de fiche. Chaque UUID est canonisé et empreinté dans l'espace de
+noms `DATATOURISME_UUID`, tandis qu'une révision de contenu identique réutilise
+la même observation source. Une nouvelle tentative conserve néanmoins sa
+propre occurrence légère dans `collection_item`, ce qui permet de reprendre et
+de réconcilier les pages sans dupliquer la donnée métier. Les périodes valides,
+les rejets détaillés et l'état temporel au moment de la collecte sont conservés
+comme diagnostics de l'occurrence. PostGIS contrôle en lot les coordonnées
+publiées contre le millésime actif des communes métropolitaines, choisit le
+point métropolitain le plus proche, recalcule la distance géodésique depuis le
+centre figé du cycle et classe explicitement les objets sans position, hors de
+France métropolitaine ou hors rayon. Les objets dans le rayon restent en
+attente de projection ; un objet uniquement passé reste également en attente
+afin que le prochain incrément puisse mettre à jour une fiche déjà connue sans
+créer de nouvelle fiche passée.
 
 ### Jalon 8 — Scoring explicable
 

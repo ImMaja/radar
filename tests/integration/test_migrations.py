@@ -35,11 +35,22 @@ def test_migrations_enable_postgis_and_create_the_current_schema(
                         "'collection_cycle_commune', 'collection_reference_usage', "
                         "'data_source', 'external_identity', 'source_observation', "
                         "'collection_item', 'candidate_position', 'opportunity', "
-                        "'organization', 'establishment', 'prospect', 'source_binding', "
+                        "'organization', 'establishment', 'prospect', 'event', "
+                        "'event_period_set', 'event_period', 'source_binding', "
                         "'source_sighting', 'field_lineage', 'location_assertion', "
                         "'contact_set', 'contact_point', 'sirene_known_status_check')"
                     )
                 ).scalars()
+            )
+            datatourisme_source = (
+                connection.execute(
+                    text(
+                        "SELECT name, authority, terms_reference, is_active, metadata "
+                        "FROM data_source WHERE code = 'DATATOURISME_API'"
+                    )
+                )
+                .mappings()
+                .one()
             )
             municipality_indexes = set(
                 connection.execute(
@@ -79,6 +90,9 @@ def test_migrations_enable_postgis_and_create_the_current_schema(
         "organization",
         "establishment",
         "prospect",
+        "event",
+        "event_period_set",
+        "event_period",
         "source_binding",
         "source_sighting",
         "field_lineage",
@@ -86,6 +100,13 @@ def test_migrations_enable_postgis_and_create_the_current_schema(
         "contact_set",
         "contact_point",
         "sirene_known_status_check",
+    }
+    assert datatourisme_source == {
+        "name": "API DATAtourisme v1",
+        "authority": "DATAtourisme",
+        "terms_reference": "Licence Ouverte 2.0",
+        "is_active": True,
+        "metadata": {"api_version": "v1", "resource": "entertainmentAndEvent"},
     }
     assert "ix_commune_boundary_boundary" in municipality_indexes
     assert "ix_commune_boundary_boundary_geography" in municipality_indexes

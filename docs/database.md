@@ -2,7 +2,7 @@
 
 > Statut : conception logique du MVP
 >
-> Dernière mise à jour : 28 septembre 2026
+> Dernière mise à jour : 1er octobre 2026
 >
 > SGBD cible : PostgreSQL avec PostGIS
 
@@ -603,6 +603,13 @@ valide et non terminée. Une fiche manuelle ne peut être enregistrée comme
 jour illisible ou accidentellement vide ne remplace pas silencieusement le
 dernier ensemble source valide : elle reste une observation rejetée visible
 dans le bilan de collecte.
+
+Depuis la migration `20261001_13`, `event`, `event_period_set` et
+`event_period` font partie du schéma exécutable. Les contraintes imposent les
+couches, l'unicité de chaque ensemble courant, l'ordre temporel, le fuseau
+d'interprétation et la précision. L'importeur DATAtourisme n'est pas encore
+branché à ces tables : cette migration fournit volontairement le socle du
+prochain incrément sans prétendre que la collecte de bout en bout est achevée.
 
 ### 9.5 Visibilité ordinaire d'un événement
 
@@ -1261,6 +1268,19 @@ entièrement passé ou une période invalide peut donc compter dans le total re�
 et unique avec une décision `REJECTED`, sans produire de fiche. Cette
 distinction est indispensable pour réconcilier le fournisseur sans confondre
 volume brut et opportunités importées.
+
+Le staging DATAtourisme exécutable applique désormais ce modèle avant la
+projection événementielle. Il réutilise l'identité et l'observation lorsque
+l'UUID et le contenu sont inchangés, mais crée une occurrence distincte pour
+chaque tentative. La classification `IN_RADIUS`, `OUTSIDE_RADIUS`,
+`LOCATION_UNKNOWN` ou `OUTSIDE_METROPOLITAN_FRANCE` est calculée en lot par
+PostGIS avec le centre du cycle et le millésime actif des communes. Les
+périodes validées et leurs rejets sont placés dans le diagnostic structuré de
+l'occurrence ; ils ne constituent pas une seconde copie brute de la réponse.
+Une occurrence dans le rayon reste sans décision jusqu'à la projection, y
+compris lorsqu'elle ne possède que des périodes passées, car elle peut mettre à
+jour une fiche déjà connue. Aucun de ces traitements n'écrit encore dans
+`event`, `event_period_set` ou `event_period`.
 
 ### 15.9 `candidate_position`
 
