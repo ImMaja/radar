@@ -23,8 +23,8 @@ PostgreSQL/PostGIS, des migrations Alembic, un worker séparé et une interface
 React statique pour le compte unique. L'utilisateur peut géocoder puis
 confirmer une adresse de France métropolitaine, régler séparément les rayons
 de collecte et de recherche jusqu'à 50 km et consulter l'état durable des
-connecteurs. Le jalon 6 est en cours : le contrat de lecture de l'API Sirene,
-le référentiel PostGIS versionné des communes et la planification durable des
+connecteurs. Le pipeline Sirene est implémenté : le contrat de lecture de l'API
+Sirene, le référentiel PostGIS versionné des communes et la planification durable des
 lots sont implémentés. Leur exécution persistée réconcilie les pages et les
 totaux, conserve les preuves non sensibles par tentative et reprend un lot
 interrompu depuis son début. Les candidats publics sont préparés par page avec
@@ -71,11 +71,23 @@ de sa provenance complète sont configurés.
 Le pipeline DATAtourisme est maintenant assemblé dans le worker lorsque sa
 clé API est configurée. Il sait préparer, réconcilier et projeter les pages
 événementielles ; une reprise et une seconde collecte réutilisent les mêmes
-identités. Son déclenchement depuis le web reste indisponible jusqu'à la
-livraison de la navigation événementielle. Une première API privée permet déjà
-de consulter la liste et le détail des événements enregistrés, avec filtres
-locaux, périodes effectives, contacts et provenance ; elle ne relance jamais
-la collecte DATAtourisme.
+identités. L'onglet « Événements » propose la liste paginée, les filtres de
+distance, période, catégorie source, organisateur, contact et statut, ainsi
+que le détail de toutes les périodes connues. Les instants sont affichés dans
+le fuseau Europe/Paris ; les horaires absents ne sont pas inventés. Les contacts
+gardent leur portée publiée, et les producteurs et diffuseurs apparaissent
+dans la provenance avec la licence, sans devenir des organisateurs.
+Le bouton « Actualiser maintenant » est disponible dans les réglages lorsque
+la clé DATAtourisme est configurée ; il crée un travail pour le worker, sans
+attendre la collecte dans la requête web. La navigation et les filtres
+interrogent uniquement le catalogue local. Le parcours complet a également été
+validé avec le vrai fournisseur autour de Dax le 1er octobre 2026 dans une base
+temporaire : 2 676 objets réconciliés, 2 562 événements importés, puis une
+seconde collecte sans doublon ni version supplémentaire. L'essai du frontend
+compilé dans Firefox headless valide connexion, liste, pagination, détail,
+filtrage à 30 km et déconnexion. Le jalon 7 est terminé ; le scoring explicable
+est la prochaine étape. Ces mesures ne constituent pas une garantie
+d'exhaustivité ni un avis commercial sur les événements importés.
 
 Un essai opérationnel sur le millésime de septembre a réconcilié 161 506
 établissements et 160 429 positions fichier, puis validé la reprise fine du
@@ -225,6 +237,14 @@ dans un second terminal :
 ```bash
 .venv/bin/radar-worker
 ```
+
+DATAtourisme fonctionne indépendamment de Sirene : sa clé dans `.env.local` et
+le référentiel communal actif suffisent pour tester sa collecte, sans fichier
+Parquet Sirene. Une fois connecté sur le site, confirmer l'adresse dans
+« Réglages », lancer « Actualiser maintenant » sur DATAtourisme, suivre le
+travail puis ouvrir « Événements ». Changer les filtres de l'agenda ne relance
+pas la collecte. Les mises à jour automatiques nocturnes ne sont pas encore
+implémentées.
 
 L'option `--once` réserve au plus un travail puis arrête le processus ; elle est
 utile pour un test local contrôlé.

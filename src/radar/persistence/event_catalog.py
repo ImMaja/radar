@@ -21,9 +21,11 @@ from radar.events.catalog import (
     EventReferencePositionRequiredError,
     EventSearch,
     EventSource,
+    EventSourceParty,
     EventSummary,
     EventTemporalState,
 )
+from radar.events.contracts import EventSourcePartyRole
 
 _EFFECTIVE_CTES = """
 effective_period_set AS (
@@ -397,9 +399,13 @@ class SqlAlchemyEventCatalogRepository:
         rows = connection.execute(
             text(
                 """
-                SELECT source.code, source.name, source.authority, binding.state,
+                SELECT source.code, source.name, source.authority,
+                       source.terms_reference AS license_name,
+                       binding.state,
                        binding.first_observed_at, binding.last_observed_at,
-                       observation.retrieved_at, observation.source_updated_at
+                       observation.retrieved_at, observation.source_updated_at,
+                       COALESCE(observation.payload -> 'source_parties', '[]'::jsonb)
+                         AS source_parties
                 FROM source_binding AS binding
                 JOIN data_source AS source ON source.code = binding.data_source_code
                 JOIN source_observation AS observation
@@ -420,6 +426,32 @@ class SqlAlchemyEventCatalogRepository:
                 last_observed_at=cast(datetime, row["last_observed_at"]),
                 retrieved_at=cast(datetime, row["retrieved_at"]),
                 source_updated_at=cast(datetime | None, row["source_updated_at"]),
+                license_name=cast(str | None, row["license_name"]),
+                parties=SqlAlchemyEventCatalogRepository._source_parties(row["source_parties"]),
             )
             for row in rows
         )
+
+    @staticmethod
+    def _source_parties(value: object) -> tuple[EventSourceParty, ...]:
+        if not isinstance(value, list):
+            raise EventCatalogUnavailableError("event source parties are malformed")
+        parties: list[EventSourceParty] = []
+        for party in value:
+            if not isinstance(party, dict):
+                raise EventCatalogUnavailableError("event source party is malformed")
+            role = party.get("role")
+            identifier = party.get("identifier")
+            name = party.get("legal_name")
+            if role not in ("CREATOR", "PUBLISHER", "OWNER") or any(
+                item is not None and not isinstance(item, str) for item in (identifier, name)
+            ):
+                raise EventCatalogUnavailableError("event source party violates its contract")
+            parties.append(
+                EventSourceParty(
+                    cast(EventSourcePartyRole, role),
+                    cast(str | None, identifier),
+                    cast(str | None, name),
+                )
+            )
+        return tuple(parties)

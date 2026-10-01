@@ -10,6 +10,28 @@ from radar.config import Settings
 DATABASE_URL = "postgresql+psycopg://radar:private@127.0.0.1:5432/radar"
 
 
+@pytest.mark.parametrize("invalid_field", ["database_url", "session_idle_seconds"])
+def test_configuration_errors_do_not_expose_loaded_inputs(
+    monkeypatch: pytest.MonkeyPatch, invalid_field: str
+) -> None:
+    monkeypatch.setenv("RADAR_SIRENE_API_KEY", "public-sirene-secret-sentinel")
+    monkeypatch.setenv("RADAR_DATATOURISME_API_KEY", "public-tourism-secret-sentinel")
+    monkeypatch.setenv("RADAR_DATABASE_URL", DATABASE_URL)
+    if invalid_field == "database_url":
+        monkeypatch.delenv("RADAR_DATABASE_URL")
+    else:
+        monkeypatch.setenv("RADAR_SESSION_IDLE_SECONDS", "public-invalid-setting-sentinel")
+
+    with pytest.raises(ValidationError) as caught:
+        Settings(_env_file=None)
+
+    diagnostic = str(caught.value)
+    assert invalid_field in diagnostic
+    assert "input_value" not in diagnostic
+    assert "sentinel" not in diagnostic
+    assert DATABASE_URL not in diagnostic
+
+
 def test_settings_accept_explicit_psycopg_url_without_exposing_it() -> None:
     settings = Settings(_env_file=None, database_url=SecretStr(DATABASE_URL))
 

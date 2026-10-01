@@ -103,6 +103,12 @@ class EventContactResponse(BaseModel):
     source_reference: str | None
 
 
+class EventSourcePartyResponse(BaseModel):
+    role: Literal["CREATOR", "PUBLISHER", "OWNER"]
+    identifier: str | None
+    legal_name: str | None
+
+
 class EventSourceResponse(BaseModel):
     code: str
     name: str
@@ -112,6 +118,8 @@ class EventSourceResponse(BaseModel):
     last_observed_at: datetime
     retrieved_at: datetime
     source_updated_at: datetime | None
+    license_name: str | None
+    parties: list[EventSourcePartyResponse]
 
 
 class EventDetailResponse(EventSummaryResponse):
@@ -197,6 +205,13 @@ def _source_response(source: EventSource) -> EventSourceResponse:
         last_observed_at=source.last_observed_at,
         retrieved_at=source.retrieved_at,
         source_updated_at=source.source_updated_at,
+        license_name=source.license_name,
+        parties=[
+            EventSourcePartyResponse(
+                role=party.role, identifier=party.identifier, legal_name=party.legal_name
+            )
+            for party in source.parties
+        ],
     )
 
 

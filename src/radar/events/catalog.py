@@ -5,6 +5,8 @@ from datetime import date, datetime, time
 from typing import Literal, Protocol
 from uuid import UUID
 
+from radar.events.contracts import EventSourcePartyRole
+
 EventSort = Literal["date", "distance"]
 EventDirection = Literal["asc", "desc"]
 EventTemporalState = Literal["UPCOMING", "ONGOING"]
@@ -84,6 +86,15 @@ class EventContact:
 
 
 @dataclass(frozen=True)
+class EventSourceParty:
+    """Named production party, without any organizer or contact inference."""
+
+    role: EventSourcePartyRole
+    identifier: str | None
+    legal_name: str | None
+
+
+@dataclass(frozen=True)
 class EventSource:
     """Current source binding and observation freshness."""
 
@@ -95,6 +106,8 @@ class EventSource:
     last_observed_at: datetime
     retrieved_at: datetime
     source_updated_at: datetime | None
+    license_name: str | None = None
+    parties: tuple[EventSourceParty, ...] = ()
 
 
 @dataclass(frozen=True)

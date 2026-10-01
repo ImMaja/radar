@@ -379,7 +379,9 @@ de migration de données.
 
 Le démarrage échoue clairement si une valeur obligatoire est absente ou
 invalide. L'affichage diagnostique d'une configuration masque toutes les
-valeurs sensibles.
+valeurs sensibles. La validation Pydantic supprime également les valeurs
+d'entrée de son message d'erreur, y compris lorsqu'un champ obligatoire manque
+et que les clés fournisseur ont déjà été chargées.
 
 Les choix de cette section suivent les recommandations officielles
 [Password Storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html),

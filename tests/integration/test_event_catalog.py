@@ -8,7 +8,11 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from radar.events.catalog import EventNotFoundError, EventSearch
-from radar.events.contracts import EventContactCandidate, EventPeriodCandidate
+from radar.events.contracts import (
+    EventContactCandidate,
+    EventPeriodCandidate,
+    EventSourcePartyCandidate,
+)
 from radar.events.projection import EventProjectionService
 from radar.events.staging import EventCandidatePageStager
 from radar.persistence.datatourisme_projection import SqlAlchemyEventProjectionRepository
@@ -38,6 +42,9 @@ def test_searches_visible_events_and_reads_periods_contacts_and_freshness(
         ),
         types=("Festival",),
         contacts=(EventContactCandidate("GENERAL", "Accueil", ("05 58 12 34 56",), ()),),
+        source_parties=(
+            EventSourcePartyCandidate("CREATOR", "office-dax", "Office de tourisme", (), ()),
+        ),
     )
     autumn = replace(
         candidate(
@@ -101,6 +108,10 @@ def test_searches_visible_events_and_reads_periods_contacts_and_freshness(
         assert detail.contacts[0].scope == "UNKNOWN"
         assert detail.sources[0].code == "DATATOURISME_API"
         assert detail.sources[0].retrieved_at == NOW
+        assert detail.sources[0].license_name == "Licence Ouverte 2.0"
+        assert detail.sources[0].parties[0].legal_name == "Office de tourisme"
+        assert detail.sources[0].parties[0].role == "CREATOR"
+        assert detail.summary.organizer_name is None
         with engine.begin() as connection:
             connection.execute(
                 text("UPDATE event SET organizer_name = 'Comité des fêtes' WHERE id = :id"),

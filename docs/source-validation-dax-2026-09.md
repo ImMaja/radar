@@ -18,6 +18,8 @@
 >
 > Revalidation DATAtourisme : 30 septembre 2026
 >
+> Pipeline DATAtourisme et essai Firefox : 1er octobre 2026
+>
 > Périmètre : cercle de 50 km à vol d'oiseau autour de la mairie de Dax
 
 ## 1. Objet et conclusion
@@ -552,6 +554,83 @@ La traversée a aussi révélé que `shortDescription` peut être un tableau vid
 pour représenter une valeur absente. Cette seule forme est convertie en valeur
 inconnue ; une autre dérive de type reste une erreur de contrat. Aucun contenu
 métier de cette revalidation n'a été persisté.
+
+### 6.5 Pipeline complet et navigateur le 1er octobre 2026
+
+L'essai utilise une base PostGIS temporaire distincte des données Radar
+existantes. Les migrations applicatives sont appliquées jusqu'à leur dernière
+version ; le référentiel officiel des contours communaux 2026 est importé avec
+contrôle de sa taille et de son SHA-256 publiés dans le README, soit 34 791
+communes métropolitaines. Le géocodeur officiel confirme à nouveau
+`12 Rue Saint Pierre 40100 Dax`, code `40088`, point
+`(-1.051952, 43.70884)`. L'adresse est confirmée via l'API privée.
+
+Deux demandes manuelles authentifiées, protégées par CSRF, sont ensuite
+traitées par le vrai worker et l'adaptateur DATAtourisme, sans réponse
+fournisseur simulée ni filtre de date fournisseur. Le rayon vaut 50 km.
+
+| Mesure | Premier cycle | Seconde collecte |
+| --- | ---: | ---: |
+| Objets annoncés, reçus et UUID uniques | 2 676 | 2 676 |
+| Pages complètes suivies | 27 | 27 |
+| Rejets de normalisation d'objet | 0 | 0 |
+| Événements créés | 2 562 | 0 |
+| Événements inchangés | 0 | 2 562 |
+| Événements modifiés | 0 | 0 |
+| Objets hors cercle exact | 16 | 16 |
+| Nouveaux objets uniquement passés | 85 | 85 |
+| Objets sans période valide | 13 | 13 |
+| Conflits d'identité | 0 | 0 |
+| Résultat durable | `SUCCEEDED` | `SUCCEEDED` |
+| Durée du traitement worker | 16,47 s | 13,31 s |
+
+Les 13 objets sans période valide présentent une fin horaire antérieure au
+début, sans lendemain explicite. Radar n'invente pas de passage à minuit :
+le diagnostic `end_before_start_time` reste comptabilisé. Les 98 rejets métier
+et les 16 objets hors rayon ne sont pas des pages manquantes : les 2 676 objets
+restent tous reçus et expliqués. La couverture n'est publiée qu'après la
+réconciliation et la projection complètes.
+
+Le catalogue résultant contient 2 879 périodes, dont 228 sur plusieurs jours ;
+125 fiches possèdent plusieurs périodes. Certaines périodes commencent en
+2028 : aucun horizon artificiel n'est appliqué. Les périodes anciennes d'une
+fiche toujours à venir ou en cours sont également conservées. Tous les
+organisateurs et statuts déclarés restent inconnus dans cet échantillon ; les
+producteurs, diffuseurs ou relais de contact ne sont pas transformés en
+organisateurs.
+
+La seconde collecte conserve exactement les mêmes identifiants de fiches et
+les mêmes nombres d'observations, d'identités, de liens source, de positions,
+d'ensembles de contacts et de versions de périodes. Elle ne crée aucune version
+supplémentaire pour un contenu inchangé. Les contrôles PostGIS sur les 2 562
+lieux projetés trouvent zéro position hors du cercle de 50 km et zéro hors
+des contours métropolitains actifs.
+
+Les lectures privées vérifiées à chaque cycle donnent :
+
+- 2 562 événements dans 50 km ;
+- 823 dans 30 km ;
+- 2 493 avec au moins un contact connu dans 50 km ;
+- 325 avec une période intersectant la recherche à partir du 1er janvier 2027.
+
+Cent fiches sont relues par l'API à chaque cycle : périodes, provenance et
+licence restent présentes. L'accès anonyme au catalogue est refusé. Ces
+contacts ne sont pas tous des emails ni des contacts directs d'organisateur,
+et ces volumes ne constituent pas une qualification commerciale.
+
+Le frontend compilé est testé contre cette base avec Firefox 156.0.1
+headless, piloté par son interface Marionette déjà disponible, sans nouvelle
+dépendance du projet. Le parcours valide la connexion, l'onglet événements,
+les 12 éléments par page, le passage à la page 2, la fiche avec ses périodes et
+sa provenance, le retour conservant la page 2, le filtre à 30 km ramenant la
+liste à 823 événements et à la page 1, puis la déconnexion. Le nombre de cycles
+reste identique pendant cette navigation. Cet essai automatisé dans un vrai
+navigateur ne remplace pas une appréciation ergonomique par l'utilisateur.
+
+Ces mesures sont ponctuelles et n'établissent ni l'exhaustivité du territoire,
+ni la stabilité annuelle des UUID, ni la pertinence du futur scoring. Les
+données de l'essai sont temporaires et ne sont pas ajoutées au dépôt ou à la
+base existante de l'utilisateur.
 
 ## 7. Anomalies et limites
 

@@ -178,6 +178,7 @@ button.secondary {
 .view-tabs {
   display: flex;
   gap: 0.45rem;
+  flex-wrap: wrap;
 }
 
 .view-tabs button,
@@ -355,13 +356,15 @@ button.secondary {
   margin-top: 0;
 }
 
-.prospect-list {
+.prospect-list,
+.event-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
 }
 
-.prospect-card {
+.prospect-card,
+.event-card {
   display: flex;
   min-width: 0;
   min-height: 16rem;
@@ -374,22 +377,26 @@ button.secondary {
   justify-content: space-between;
 }
 
-.prospect-card h3 {
+.prospect-card h3,
+.event-card h3 {
   margin: 0.45rem 0;
   font-family: Georgia, serif;
   font-size: 1.35rem;
 }
 
-.prospect-card > div > p:not(.prospect-meta) {
+.prospect-card > div > p:not(.prospect-meta),
+.event-card > div > p:not(.event-meta) {
   color: #5c6b64;
   line-height: 1.5;
 }
 
-.prospect-card button {
+.prospect-card button,
+.event-card button {
   width: 100%;
 }
 
-.prospect-meta {
+.prospect-meta,
+.event-meta {
   display: flex;
   gap: 0.5rem;
   align-items: center;
@@ -401,7 +408,8 @@ button.secondary {
   text-transform: uppercase;
 }
 
-.prospect-signals {
+.prospect-signals,
+.event-signals {
   display: flex;
   gap: 0.45rem;
   padding: 0;
@@ -409,7 +417,8 @@ button.secondary {
   flex-wrap: wrap;
 }
 
-.prospect-signals li {
+.prospect-signals li,
+.event-signals li {
   padding: 0.3rem 0.55rem;
   border-radius: 999px;
   color: #4e6158;
@@ -463,6 +472,30 @@ button.secondary {
 
 .detail-address {
   color: #5c6b64;
+}
+
+.event-description {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  line-height: 1.65;
+}
+
+.event-periods {
+  display: grid;
+  gap: 0.8rem;
+  padding-left: 1.25rem;
+}
+
+.event-periods small {
+  display: block;
+  margin-top: 0.25rem;
+  color: #66736d;
+}
+
+.contacts a,
+.provenance a {
+  color: #93451d;
+  overflow-wrap: anywhere;
 }
 
 .detail-grid {
@@ -725,6 +758,7 @@ button.secondary {
   .filter-primary,
   .filter-grid,
   .prospect-list,
+  .event-list,
   .detail-grid {
     grid-template-columns: 1fr;
   }

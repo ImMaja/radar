@@ -21,6 +21,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_prefix="RADAR_",
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     environment: Environment = "development"

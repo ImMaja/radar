@@ -74,14 +74,15 @@ def create_app(
             owned_geocoder,
         )
     if collection_backend is None:
-        # Event collection stays hidden until the event catalog can be consulted.
-        enabled_connectors: frozenset[Connector] = (
-            frozenset(("SIRENE",)) if resolved_settings.sirene_connector_configured else frozenset()
-        )
+        configured_connectors: set[Connector] = set()
+        if resolved_settings.sirene_connector_configured:
+            configured_connectors.add("SIRENE")
+        if resolved_settings.datatourisme_connector_configured:
+            configured_connectors.add("DATATOURISME")
         collection_backend = (
             CollectionService(
                 SqlAlchemyCollectionRepository(owned_database.engine),
-                enabled_connectors=enabled_connectors,
+                enabled_connectors=frozenset(configured_connectors),
             )
             if owned_database is not None
             else UnavailableCollectionBackend()

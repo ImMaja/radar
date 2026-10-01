@@ -208,6 +208,92 @@ export interface ProspectQuery {
   offset: number;
 }
 
+export type EventSort = "date" | "distance";
+export type EventDeclaredStatus = "SCHEDULED" | "POSTPONED" | "CANCELLED" | "UNKNOWN";
+
+export interface EventSummaryView {
+  id: string;
+  title: string;
+  types: string[];
+  organizer_name: string | null;
+  declared_status: EventDeclaredStatus;
+  temporal_state: "UPCOMING" | "ONGOING";
+  next_start_at: string;
+  full_address: string | null;
+  municipality: string | null;
+  distance_meters: number | null;
+  has_contact: boolean;
+  last_observed_at: string;
+}
+
+export interface EventPageView {
+  items: EventSummaryView[];
+  total: number;
+  limit: number;
+  offset: number;
+  applied_radius_meters: number;
+}
+
+export interface EventPeriodView {
+  start_date: string;
+  end_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  precision: string;
+  source_path: string;
+}
+
+export interface EventContactView {
+  type: "EMAIL" | "PHONE" | "WEBSITE" | "BOOKING_URL" | "CONTACT_RELAY";
+  value: string;
+  scope: "LOCAL" | "CENTRAL" | "UNKNOWN";
+  label: string | null;
+  source_reference: string | null;
+}
+
+export interface EventSourceView {
+  code: string;
+  name: string;
+  authority: string;
+  state: string;
+  first_observed_at: string;
+  last_observed_at: string;
+  retrieved_at: string;
+  source_updated_at: string | null;
+  license_name: string | null;
+  parties: {
+    role: "CREATOR" | "PUBLISHER" | "OWNER";
+    identifier: string | null;
+    legal_name: string | null;
+  }[];
+}
+
+export interface EventDetailView extends EventSummaryView {
+  description: string | null;
+  source_uri: string | null;
+  period_layer: "SOURCE" | "USER";
+  periods: EventPeriodView[];
+  longitude: number | null;
+  latitude: number | null;
+  contacts: EventContactView[];
+  sources: EventSourceView[];
+}
+
+export interface EventQuery {
+  q?: string;
+  maxDistanceMeters?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  category?: string;
+  organizer?: string;
+  hasContact?: boolean;
+  declaredStatus?: EventDeclaredStatus;
+  sort: EventSort;
+  direction: SortDirection;
+  limit: number;
+  offset: number;
+}
+
 interface ErrorBody {
   code?: string;
   message?: string;
@@ -374,4 +460,28 @@ export function getProspects(query: ProspectQuery): Promise<ProspectPageView> {
 
 export function getProspect(prospectId: string): Promise<ProspectDetailView> {
   return request<ProspectDetailView>(`/api/v1/prospects/${encodeURIComponent(prospectId)}`);
+}
+
+export function getEvents(query: EventQuery): Promise<EventPageView> {
+  const parameters = new URLSearchParams({
+    sort: query.sort,
+    direction: query.direction,
+    limit: String(query.limit),
+    offset: String(query.offset),
+  });
+  if (query.q) parameters.set("q", query.q);
+  if (query.maxDistanceMeters !== undefined) {
+    parameters.set("max_distance_meters", String(query.maxDistanceMeters));
+  }
+  if (query.dateFrom) parameters.set("date_from", query.dateFrom);
+  if (query.dateTo) parameters.set("date_to", query.dateTo);
+  if (query.category) parameters.set("category", query.category);
+  if (query.organizer) parameters.set("organizer", query.organizer);
+  if (query.hasContact) parameters.set("has_contact", "true");
+  if (query.declaredStatus) parameters.set("declared_status", query.declaredStatus);
+  return request<EventPageView>(`/api/v1/events?${parameters.toString()}`);
+}
+
+export function getEvent(eventId: string): Promise<EventDetailView> {
+  return request<EventDetailView>(`/api/v1/events/${encodeURIComponent(eventId)}`);
 }

@@ -765,6 +765,14 @@ volume vivant ne remettent pas en cause l'identité source. Cette exécution a
 aussi confirmé que `shortDescription` peut valoir un tableau vide pour signifier
 une absence ; seule cette forme vide est normalisée en valeur inconnue.
 
+Le 1er octobre 2026, deux cycles du pipeline complet autour de Dax ont
+réconcilié chacun 2 676 objets sur 27 pages et publié leur couverture après
+projection. Le catalogue contient 2 562 événements ; la relance n'a créé ni
+fiche ni version supplémentaire. Les contrôles PostGIS et l'essai Firefox du
+catalogue sont consignés dans `docs/source-validation-dax-2026-09.md`,
+section 6.5. La présence d'un contact et le nombre d'objets importés ne
+préjugent pas de leur intérêt commercial.
+
 ### 6.5 Identité et déduplication
 
 Pour le MVP, le couple `(DATAtourisme, UUID)` identifie l'objet publié par

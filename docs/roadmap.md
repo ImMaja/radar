@@ -1,6 +1,6 @@
 # Radar — Roadmap
 
-> Statut : jalons 0 à 6 terminés, jalon 7 en cours
+> Statut : jalons 0 à 7 terminés, prochain jalon : scoring explicable
 >
 > Dernière mise à jour : 1er octobre 2026
 >
@@ -544,7 +544,7 @@ jalon 6.
 
 ### Jalon 7 — Événements DATAtourisme de bout en bout
 
-**État : en cours depuis le 30 septembre 2026.**
+**État : terminé le 1er octobre 2026.**
 
 **But :** livrer la deuxième famille d'opportunités.
 
@@ -727,6 +727,43 @@ inventé à cette étape. Les tests HTTP et PostGIS vérifient notamment la
 priorité d'une correction utilisateur et l'absence d'appel fournisseur. La
 navigation événementielle et le déclenchement de sa collecte depuis le site
 restent à livrer avant que ce jalon soit utilisable par l'utilisateur.
+
+Le douzième incrément livre l'onglet « Événements » dans l'interface React et
+active le déclenchement manuel DATAtourisme lorsque sa clé est configurée,
+indépendamment des prérequis Sirene. La liste paginée applique les filtres et
+tris de l'API locale ; le retour d'une fiche conserve la page et les filtres.
+La fiche détail présente chaque période connue, ses seuls horaires publiés,
+les contacts avec leur portée, ainsi que source, producteurs, diffuseurs,
+licence et dates de fraîcheur. Les instants sont affichés en Europe/Paris et
+les dates sans heure restent des dates civiles. Les tests de l'interface
+couvrent aussi les réponses arrivant dans le désordre et les sessions expirées.
+Un parcours HTTP/PostGIS avec authentification réelle et fournisseur simulé
+vérifie la demande protégée par CSRF, sa mise en attente sans appel fournisseur,
+le traitement par le worker, la consultation et l'ajout de périodes à la même
+fiche lors d'une seconde collecte. Sans clé, le connecteur reste indisponible.
+
+Le treizième incrément valide le parcours réel dans une base temporaire
+séparée, avec les contours communaux officiels 2026 contrôlés par empreinte et
+l'adresse de la mairie de Dax géocodée puis confirmée. Deux demandes HTTP
+authentifiées sont traitées par le vrai worker : chaque cycle réconcilie
+2 676 objets sur 27 pages. Le premier crée 2 562 événements ; le second retrouve
+exactement les mêmes fiches et versions, sans création supplémentaire. Les
+125 fiches à périodes multiples et les 228 périodes sur plusieurs jours
+confirment la représentation attendue. Les rejets et les 16 objets hors rayon
+sont comptabilisés ; aucune localisation importée ne sort du cercle exact ou
+des contours métropolitains. Cent fiches sont relues par l'API à chaque cycle.
+Le frontend compilé est aussi testé dans Firefox headless : connexion, liste,
+pagination, détail avec périodes et provenance, retour conservant la page,
+filtre à 30 km et déconnexion. Le filtre renvoie 823 événements sans créer de
+cycle. Il s'agit d'un essai navigateur automatisé, pas d'une validation
+ergonomique par l'utilisateur. Le rapport daté détaille les mesures et leurs
+limites dans `docs/source-validation-dax-2026-09.md`, section 6.5.
+Le test a aussi conduit à supprimer les valeurs d'entrée des messages d'erreur
+de configuration, avec un test de non-divulgation des clés chargées.
+
+Résultat : critère de sortie atteint. Le scoring et la planification nocturne
+appartiennent aux jalons suivants ; l'essai personnel de l'interface reste
+recommandé sans bloquer le prochain incrément.
 
 ### Jalon 8 — Scoring explicable
 

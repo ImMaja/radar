@@ -19,6 +19,7 @@ import {
   type SessionView,
   updateGeographyRadii,
 } from "./api";
+import { EventCatalog } from "./EventCatalog";
 import { ProspectCatalog } from "./ProspectCatalog";
 
 type AppState =
@@ -54,7 +55,7 @@ export function App() {
   const [collections, setCollections] = useState<CollectionDashboardView | null>(null);
   const [candidate, setCandidate] = useState<ReferencePositionView | null>(null);
   const [geographyBusy, setGeographyBusy] = useState(false);
-  const [activeView, setActiveView] = useState<"prospects" | "settings">("settings");
+  const [activeView, setActiveView] = useState<"prospects" | "events" | "settings">("settings");
   const openSettings = useCallback(() => setActiveView("settings"), []);
   const handleAuthenticationRequired = useCallback(() => {
     setMessage(null);
@@ -305,6 +306,14 @@ export function App() {
               </button>
               <button
                 type="button"
+                className={activeView === "events" ? "active" : ""}
+                aria-current={activeView === "events" ? "page" : undefined}
+                onClick={() => setActiveView("events")}
+              >
+                Événements
+              </button>
+              <button
+                type="button"
                 className={activeView === "settings" ? "active" : ""}
                 aria-current={activeView === "settings" ? "page" : undefined}
                 onClick={() => setActiveView("settings")}
@@ -319,6 +328,13 @@ export function App() {
 
           {activeView === "prospects" ? (
             <ProspectCatalog
+              hasReferencePosition={Boolean(geography?.reference_position)}
+              configuredRadiusMeters={geography?.search_radius_meters ?? 50_000}
+              onConfigure={openSettings}
+              onAuthenticationRequired={handleAuthenticationRequired}
+            />
+          ) : activeView === "events" ? (
+            <EventCatalog
               hasReferencePosition={Boolean(geography?.reference_position)}
               configuredRadiusMeters={geography?.search_radius_meters ?? 50_000}
               onConfigure={openSettings}

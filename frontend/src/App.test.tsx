@@ -270,42 +270,54 @@ describe("authentication interface", () => {
     expect(screen.queryByText("Une connexion valide est nécessaire.")).not.toBeInTheDocument();
   });
 
-  it("queues a manual collection and displays its durable waiting state", async () => {
-    // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API.
-    document.cookie = "radar_csrf=csrf-value; Path=/";
-    const confirmedGeography = {
-      ...geography,
-      reference_position: { ...candidate, confirmed_at: "2026-09-19T12:01:00Z" },
-    };
-    const activeCollections = {
-      connectors: [
-        { ...collections.connectors[0], active_job: waitingJob, latest_job: waitingJob },
-        collections.connectors[1],
-      ],
-    };
-    fetchMock
-      .mockResolvedValueOnce(response(session))
-      .mockResolvedValueOnce(response(confirmedGeography))
-      .mockResolvedValueOnce(response(collections))
-      .mockResolvedValueOnce(response({ created: true, job: waitingJob }, 202))
-      .mockResolvedValueOnce(response(activeCollections));
-    render(<App />);
-    await screen.findByRole("heading", { name: "Collectes" });
+  it.each(["SIRENE", "DATATOURISME"] as const)(
+    "queues a manual %s collection and displays its durable waiting state",
+    async (connector) => {
+      // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API.
+      document.cookie = "radar_csrf=csrf-value; Path=/";
+      const confirmedGeography = {
+        ...geography,
+        reference_position: { ...candidate, confirmed_at: "2026-09-19T12:01:00Z" },
+      };
+      const activeCollections = {
+        connectors: collections.connectors.map((item) =>
+          item.connector === connector
+            ? {
+                ...item,
+                active_job: { ...waitingJob, connector },
+                latest_job: { ...waitingJob, connector },
+              }
+            : item,
+        ),
+      };
+      fetchMock
+        .mockResolvedValueOnce(response(session))
+        .mockResolvedValueOnce(response(confirmedGeography))
+        .mockResolvedValueOnce(response(collections))
+        .mockResolvedValueOnce(response({ created: true, job: { ...waitingJob, connector } }, 202))
+        .mockResolvedValueOnce(response(activeCollections));
+      render(<App />);
+      await screen.findByRole("heading", { name: "Collectes" });
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Actualiser maintenant" })[0]);
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Actualiser maintenant" })[
+          connector === "SIRENE" ? 0 : 1
+        ],
+      );
 
-    expect(
-      await screen.findByText("La collecte SIRENE a été placée en attente."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("En attente")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/collections/SIRENE",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ "X-CSRF-Token": "csrf-value" }),
-      }),
-    );
-  });
+      expect(
+        await screen.findByText(`La collecte ${connector} a été placée en attente.`),
+      ).toBeInTheDocument();
+      expect(screen.getByText("En attente")).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/v1/collections/${connector}`,
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({ "X-CSRF-Token": "csrf-value" }),
+        }),
+      );
+    },
+  );
 
   it("opens the prospect catalogue without querying it before an address is confirmed", async () => {
     fetchMock
@@ -321,6 +333,47 @@ describe("authentication interface", () => {
     expect(screen.getByText(/Confirmez une adresse de référence/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(3);
 
+    fireEvent.click(screen.getByRole("button", { name: "Configurer l’adresse" }));
+    expect(
+      await screen.findByRole("heading", { name: "Adresse de référence" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the event catalogue and sends an expired session back to login", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(session))
+      .mockResolvedValueOnce(
+        response({
+          ...geography,
+          reference_position: { ...candidate, confirmed_at: "2026-09-19T12:01:00Z" },
+        }),
+      )
+      .mockResolvedValueOnce(response(collections))
+      .mockResolvedValueOnce(
+        response({ code: "authentication_required", message: "Session expirée." }, 401),
+      );
+    render(<App />);
+    await screen.findByText("Bonjour Radar");
+
+    fireEvent.click(screen.getByRole("button", { name: "Événements" }));
+    expect(await screen.findByRole("heading", { name: "Connexion" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/v1/events?sort=date&direction=asc&limit=12&offset=0",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+    expect(screen.queryByRole("heading", { name: "Agenda local" })).not.toBeInTheDocument();
+  });
+
+  it("opens the event settings prompt without querying before address confirmation", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(session))
+      .mockResolvedValueOnce(response(geography))
+      .mockResolvedValueOnce(response(collections));
+    render(<App />);
+    await screen.findByText("Bonjour Radar");
+    fireEvent.click(screen.getByRole("button", { name: "Événements" }));
+    expect(await screen.findByRole("heading", { name: "Agenda local" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     fireEvent.click(screen.getByRole("button", { name: "Configurer l’adresse" }));
     expect(
       await screen.findByRole("heading", { name: "Adresse de référence" }),
