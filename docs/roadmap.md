@@ -640,6 +640,19 @@ attente de projection ; un objet uniquement passé reste également en attente
 afin que le prochain incrément puisse mettre à jour une fiche déjà connue sans
 créer de nouvelle fiche passée.
 
+Le cinquième incrément projette ces observations par page et par transaction
+dans `opportunity`, `event`, `source_binding`, `source_sighting` et les périodes
+`SOURCE`. Un UUID déjà connu retrouve sa fiche, y compris lorsqu'elle est
+masquée ou que toutes les nouvelles périodes sont passées ; un objet uniquement
+passé encore inconnu ne crée pas de fiche. Un changement des périodes retire
+l'ancien ensemble `SOURCE` avant d'en publier un nouveau, sans toucher à
+l'ensemble `USER` ni à l'état de masquage. Les décisions des occurrences sont
+réconciliées à la fin de la tentative et les tests PostGIS couvrent création,
+reprise, mise à jour et coexistence des deux couches. Cette projection n'est
+pas encore branchée au worker : localisation persistée, contacts, détection
+des contradictions d'identité, interface et filtres restent à réaliser avant
+que le jalon soit utilisable de bout en bout.
+
 ### Jalon 8 — Scoring explicable
 
 **But :** faire remonter les opportunités utiles sans en cacher.

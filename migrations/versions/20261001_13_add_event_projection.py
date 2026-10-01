@@ -244,6 +244,23 @@ def downgrade() -> None:
         "DELETE FROM collection_item "
         "WHERE authority = 'DATATOURISME' AND namespace = 'DATATOURISME_UUID'"
     )
+    op.execute(
+        "DELETE FROM field_lineage WHERE opportunity_id IN ("
+        "SELECT opportunity_id FROM external_identity "
+        "WHERE authority = 'DATATOURISME' AND namespace = 'DATATOURISME_UUID')"
+    )
+    op.execute(
+        "UPDATE source_observation SET source_binding_id = NULL "
+        "WHERE data_source_code = 'DATATOURISME_API'"
+    )
+    op.execute("DELETE FROM source_binding WHERE data_source_code = 'DATATOURISME_API'")
+    op.execute(
+        "WITH detached AS ("
+        "UPDATE external_identity SET opportunity_id = NULL "
+        "WHERE authority = 'DATATOURISME' AND namespace = 'DATATOURISME_UUID' "
+        "RETURNING opportunity_id) "
+        "DELETE FROM opportunity WHERE id IN (SELECT opportunity_id FROM detached)"
+    )
     op.execute("DELETE FROM source_observation WHERE data_source_code = 'DATATOURISME_API'")
     op.execute(
         "DELETE FROM external_identity "
